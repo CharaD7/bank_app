@@ -9,6 +9,8 @@ import {
   View,
   Dimensions
 } from 'react-native';
+import { useTheme } from '@/context/ThemeContext';
+import { withAlpha } from '@/theme/color-utils';
 
 // Get screen width for positioning
 const { width } = Dimensions.get('window');
@@ -19,6 +21,9 @@ const AlertItem = ({ alert, onHide }: { alert: AlertMessage; onHide: () => void 
   const translateY = useRef(new Animated.Value(-100)).current;
   const opacity = useRef(new Animated.Value(0)).current;
 
+  // Split the animations into separate effects to avoid scheduling updates during render
+  
+  // Handle entrance animation
   useEffect(() => {
     // Slide in and fade in animation
     Animated.parallel([
@@ -33,10 +38,23 @@ const AlertItem = ({ alert, onHide }: { alert: AlertMessage; onHide: () => void 
         useNativeDriver: true,
       }),
     ]).start();
+  }, [translateY, opacity]);
 
-    // If alert has a duration, slide out and fade out after duration
-    if (alert.duration && alert.duration > 0) {
-      const timer = setTimeout(() => {
+  // Handle auto-dismissal separately
+  useEffect(() => {
+    // Only set up the timer if the alert has a duration
+    if (!alert.duration || alert.duration <= 0) {
+      return;
+    }
+    
+    // Create a reference to track if the component is still mounted
+    let isMounted = true;
+    
+    // Set up the timer for auto-dismissal
+    const timer = setTimeout(() => {
+      // Only proceed if the component is still mounted
+      if (isMounted) {
+        // Start the exit animation
         Animated.parallel([
           Animated.timing(translateY, {
             toValue: -100,
@@ -49,51 +67,59 @@ const AlertItem = ({ alert, onHide }: { alert: AlertMessage; onHide: () => void 
             useNativeDriver: true,
           }),
         ]).start(() => {
-          onHide();
+          // Only call onHide if the component is still mounted
+          if (isMounted) {
+            onHide();
+          }
         });
-      }, alert.duration - 300); // Subtract animation duration
+      }
+    }, alert.duration - 300); // Subtract animation duration
 
-      return () => clearTimeout(timer);
-    }
-  }, [alert, onHide, translateY, opacity]);
+    // Clean up function to prevent memory leaks and updates on unmounted components
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [alert.duration, onHide, translateY, opacity]);
 
+  const { colors } = useTheme();
   // Get icon and colors based on alert type
   const getAlertStyles = (type: AlertType) => {
     switch (type) {
       case 'success':
         return {
-          backgroundColor: '#ECFDF5',
-          borderColor: '#10B981',
-          icon: <CheckCircle color="#10B981" size={24} />,
-          textColor: '#065F46',
+          backgroundColor: colors.successBg,
+          borderColor: colors.positive,
+          icon: <CheckCircle color={colors.positive} size={24} />,
+          textColor: colors.positive,
         };
       case 'error':
         return {
-          backgroundColor: '#FEF2F2',
-          borderColor: '#EF4444',
-          icon: <AlertCircle color="#EF4444" size={24} />,
-          textColor: '#991B1B',
+          backgroundColor: colors.errorBg,
+          borderColor: colors.negative,
+          icon: <AlertCircle color={colors.negative} size={24} />,
+          textColor: colors.negative,
         };
       case 'warning':
         return {
-          backgroundColor: '#FFFBEB',
-          borderColor: '#F59E0B',
-          icon: <AlertTriangle color="#F59E0B" size={24} />,
-          textColor: '#92400E',
+          backgroundColor: colors.warningBg,
+          borderColor: colors.warning,
+          icon: <AlertTriangle color={colors.warning} size={24} />,
+          textColor: colors.warning,
         };
       case 'info':
         return {
-          backgroundColor: '#EFF6FF',
-          borderColor: '#3B82F6',
-          icon: <Info color="#3B82F6" size={24} />,
-          textColor: '#1E40AF',
+          backgroundColor: withAlpha(colors.tintPrimary, 0.12),
+          borderColor: colors.tintPrimary,
+          icon: <Info color={colors.tintPrimary} size={24} />,
+          textColor: colors.textPrimary,
         };
       default:
         return {
-          backgroundColor: '#F9FAFB',
-          borderColor: '#6B7280',
-          icon: <Info color="#6B7280" size={24} />,
-          textColor: '#1F2937',
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+          icon: <Info color={colors.textSecondary} size={24} />,
+          textColor: colors.textPrimary,
         };
     }
   };

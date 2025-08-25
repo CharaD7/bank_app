@@ -2,17 +2,51 @@
 
 ![BankApp Logo](/assets/images/logo.png)
 
-BankApp is a modern, feature-rich mobile banking application built with React Native and Expo. It provides users with a seamless banking experience, allowing them to manage their accounts, cards, and transactions on the go.
+BankApp is a modern, feature-rich mobile banking application built with React Native and Expo. It provides users with a seamless banking experience, allowing them to manage their accounts, cards, and transactions on the go. The application uses Appwrite for backend services and a lightweight server (Bun + Hono) for card storage and payment flows (deployable to Fly.io or run locally).
 
 ## 📱 Features
 
-- **User Authentication**: Secure sign-in and sign-up functionality
-- **Dashboard Overview**: View account balances and recent transactions at a glance
-- **Card Management**: View and manage multiple bank cards
-- **Transaction History**: Track and filter transaction history
-- **Money Transfers**: Send money to saved recipients
-- **Payment Processing**: Make payments using Paystack integration
-- **Profile Management**: Update user profile and settings
+- **User Authentication**
+  - Secure sign-in and sign-up functionality
+  - Email validation and password strength requirements
+  - Persistent sessions with AsyncStorage
+  - Comprehensive error handling with user-friendly messages
+
+- **Dashboard Overview**
+  - View account balances and recent transactions at a glance
+  - Quick access to frequently used features
+  - Personalized user experience
+
+- **Card Management**
+  - View and manage multiple bank cards
+  - Card activation/deactivation
+  - View card details and transaction history
+
+- **Transaction History**
+  - Track and filter transaction history
+  - Categorized transactions for better financial management
+  - Detailed transaction information
+
+- **Money Transfers**
+  - Send money to saved recipients
+  - Add and manage recipient information
+  - Secure transfer process
+
+- **Payments and Cards**
+  - Add cards and simulate/execute authorization via the server API
+  - Server-side tokenization; only last4/brand/expiry are stored
+  - Authenticated via Appwrite JWT
+
+- **Alert System**
+  - Real-time feedback for user actions
+  - Different alert types (success, error, warning, info)
+  - Animated alerts with auto-dismissal
+  - Consistent error handling across the application
+
+- **Profile Management**
+  - Update user profile and settings
+  - Manage security preferences
+  - View account information
 
 ## 🛠️ Technologies Used
 
@@ -23,16 +57,18 @@ BankApp is a modern, feature-rich mobile banking application built with React Na
 - **Expo Router**: File-based routing for navigation
 - **Zustand**: State management library
 - **React Native Appwrite**: Backend integration with Appwrite
-- **React Native Paystack Webview**: Payment processing with Paystack
+- **Fly.io**: Hosting for the mock server API (cards/payments)
 - **AsyncStorage**: Local data persistence
+- **React Native Reanimated**: Animation library for smooth UI interactions
 
 ## 📋 Prerequisites
 
 Before you begin, ensure you have the following installed:
 - [Node.js](https://nodejs.org/) (v16 or higher)
-- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
+- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/) or [bun](https://bun.sh/)
 - [Expo CLI](https://docs.expo.dev/get-started/installation/)
 - iOS Simulator or Android Emulator (optional for mobile testing)
+- [Appwrite Account](https://appwrite.io/) (for backend services)
 
 ## 🚀 Getting Started
 
@@ -40,7 +76,7 @@ Before you begin, ensure you have the following installed:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/bank_app.git
+   git clone https://github.com/CharaD7/bank_app.git
    cd bank_app
    ```
 
@@ -49,27 +85,57 @@ Before you begin, ensure you have the following installed:
    npm install
    # or
    yarn install
+   # or
+   bun install
    ```
 
-3. Start the development server:
+3. Set up environment variables:
+   - Copy the `.env.example` file to create your own `.env` file:
+     ```bash
+     cp .env.example .env
+     ```
+   - Edit the `.env` file with your configuration values (see [Configuration](#-configuration) section)
+
+4. Start the development server:
    ```bash
    npx expo start
    ```
 
-4. Run on your preferred platform:
+5. Run on your preferred platform:
    - Press `i` to run on iOS Simulator
    - Press `a` to run on Android Emulator
    - Scan the QR code with the Expo Go app on your physical device
 
 ## 📱 App Structure
 
-- **Authentication**: Sign-in and sign-up screens
+### Screens
+
+- **Authentication**: Sign-in and sign-up screens with validation
 - **Home**: Dashboard with account overview and quick actions
 - **Cards**: View and manage bank cards
 - **Activity**: Transaction history with filtering options
 - **Profile**: User profile and settings
 - **Transfer**: Money transfer functionality
 - **Settings**: App settings and preferences
+
+### Project Structure
+
+```
+bank_app/
+├── app/                  # Main application screens and navigation
+│   ├── (auth)/           # Authentication screens
+│   ├── (tabs)/           # Main tab screens
+│   └── _layout.tsx       # Root layout
+├── assets/               # Static assets (images, fonts, icons)
+├── components/           # Reusable components
+├── constants/            # Constants and types
+├── context/              # React context providers
+├── hooks/                # Custom React hooks
+├── lib/                  # Utility functions and API clients
+├── scripts/              # Utility scripts
+├── store/                # State management
+└── types/                # TypeScript type definitions
+```
 
 ## 🔧 Configuration
 
@@ -87,14 +153,14 @@ Then edit the `.env` file and replace the placeholder values with your actual co
 # Appwrite Configuration
 EXPO_PUBLIC_APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
 EXPO_PUBLIC_APPWRITE_PROJECT_ID=your_actual_project_id
-EXPO_PUBLIC_APPWRITE_PLATFORM=com.profbiney.vault
+EXPO_PUBLIC_APPWRITE_PLATFORM=com.user.extension
 EXPO_PUBLIC_APPWRITE_DATABASE_ID=your_database_id
 EXPO_PUBLIC_APPWRITE_USER_COLLECTION_ID=your_user_collection_id
 
-# Paystack Configuration
-EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY=your_paystack_public_key
-EXPO_PUBLIC_PAYSTACK_DEFAULT_EMAIL=your_email@example.com
-EXPO_PUBLIC_PAYSTACK_CURRENCY=GHS
+# API Base
+# Preferred: set AWS_ENDPOINT_URL_S3 to your Fly.io URL
+AWS_ENDPOINT_URL_S3=https://your-app.fly.dev
+# Alternatively, you can set EXPO_PUBLIC_AWS_ENDPOINT_URL_S3 or EXPO_PUBLIC_FLY_API_URL or EXPO_PUBLIC_API_BASE_URL
 
 # Application Environment
 EXPO_PUBLIC_APP_ENV=development
@@ -114,7 +180,7 @@ To properly configure Appwrite for this application:
 2. **Register the Android Platform**:
    - Go to Project Settings > Platforms
    - Click "Add Platform" > Select "Android"
-   - Enter the package name: `com.profbiney.vault`
+   - Enter the package name: `com.user.extension`
    - Save the platform
 
 3. **Create Database and Collections**:
@@ -122,11 +188,57 @@ To properly configure Appwrite for this application:
    - Note the Database ID
    - Create a user collection or use an existing one
    - Note the Collection ID
+   - Set up the appropriate attributes and indexes for each collection
 
 4. **Update Your .env File**:
    - Set `EXPO_PUBLIC_APPWRITE_PROJECT_ID` to your actual Project ID
    - Set `EXPO_PUBLIC_APPWRITE_DATABASE_ID` to your Database ID
    - Set `EXPO_PUBLIC_APPWRITE_USER_COLLECTION_ID` to your User Collection ID
+
+For more detailed information about the Appwrite setup, refer to the [API Documentation](API.md).
+
+## Server API (cards/payments)
+
+Use a Fly.io-hosted mock server that handles card storage and payment flows.
+
+### Dummy Mode & Seeding
+- Set DUMMY_MODE=true on the server to enable safe demo behavior.
+- Card creation rules:
+  - Luhn-valid card numbers are required
+  - In dummy mode, numbers with repeated 4-digit chunks are rejected (e.g., 4242 4242 4242 4242)
+- Server generates a random token; the app stores this token on the card and uses it as the payment source.
+- Fingerprint is randomized in dummy mode (not derived from the PAN).
+- Seeding: POST /v1/dev/seed-transactions to generate demo payments and adjust balances.
+
+- Configure the app to use it by setting in your .env:
+  - EXPO_PUBLIC_API_BASE_URL=https://your-app.fly.dev
+    or
+  - EXPO_PUBLIC_FLY_API_URL=https://your-app.fly.dev
+
+CORS
+- Browsers must match exact origins. Examples:
+  - Dev: http://localhost:19006,http://localhost:8081
+  - Snack (optional): https://snack.expo.dev
+  - Prod: https://app.yourdomain.com
+- React Native (device/emulator) generally has no Origin header; CORS is primarily for web/Snack.
+
+401/CORS troubleshooting
+- 401: Verify your client obtains an Appwrite JWT (account.createJWT()) and includes Authorization: Bearer <JWT>
+- CORS error: Ensure the browser origin is listed in CORS_ORIGINS exactly (scheme, no trailing slash)
+
+- What it provides:
+  - POST /v1/cards (adds a card; requires Authorization: Bearer <Appwrite JWT>)
+  - GET /v1/cards
+  - DELETE /v1/cards/:id
+  - Payments endpoints (authorize, capture, refund) and Notifications endpoints
+
+Note: The local server directory (server/) is deprecated and kept only for reference. Do not run it locally.
+
+### Optimization Tips
+- Use Idempotency-Key on POST requests to avoid duplicates when retrying.
+- Keep Expo packages on expected patch versions (Expo CLI suggests versions at startup).
+- In server Dockerfile, pin Bun version and prefer `bun install --ci` for reproducible builds.
+- Use tunnel mode for easy device testing: bunx expo start --tunnel.
 
 ### Verifying Environment Variables
 
@@ -157,31 +269,55 @@ This test script will:
 
 If you see the "Project with the requested ID could not be found" or "Invalid Origin" errors, this test will help you diagnose and fix the problems.
 
-### Troubleshooting Common Errors
 
-#### Appwrite Project ID Error
+## 💡 Usage Examples
 
-If you see this error:
+### Authentication
+
+The application provides a secure authentication system with email/password login:
+
+1. **Sign Up**:
+   - Navigate to the Sign Up screen
+   - Enter your name, email, phone number, password, and confirm password
+   - The system validates your input (email format, password strength)
+   - Upon successful registration, you'll be redirected to the onboarding screen
+
+2. **Sign In**:
+   - Navigate to the Sign In screen
+   - Enter your email and password
+   - Upon successful authentication, you'll be redirected to the home screen
+
+### Adding a Card
+
+1. Navigate to the Cards screen
+2. Tap on "+ Add Card"
+3. Enter your card details
+4. The app will call your server at /v1/cards using your Appwrite JWT (Bearer token)
+5. On success, a masked card (•••• •••• •••• last4) will be added to your list
+
+### Using the Alert System
+
+The application includes a comprehensive alert system for user feedback:
+
+```javascript
+// Import the useAlert hook
+import { useAlert } from '@/context/AlertContext';
+
+// Inside your component
+const { showAlert } = useAlert();
+
+// Show a success alert
+showAlert('success', 'Your payment was processed successfully.', 'Payment Successful');
+
+// Show an error alert
+showAlert('error', 'Payment failed. Please try again.', 'Payment Error');
+
+// Show a warning alert
+showAlert('warning', 'Your account balance is low.', 'Low Balance');
+
+// Show an info alert
+showAlert('info', 'New features are available.', 'Information');
 ```
-[AppwriteException: Project with the requested ID could not be found]
-```
-
-This means your Appwrite Project ID is incorrect or not properly set. Check that:
-- You've replaced the placeholder in `.env` with your actual Project ID
-- The Project ID is correctly copied from your Appwrite dashboard
-- There are no extra spaces or characters in the ID
-
-#### Invalid Origin Error
-
-If you see this error:
-```
-[AppwriteException: Invalid Origin. Register your new client (com.profbiney.vault) as a new Android platform on your project console dashboard]
-```
-
-This means the Android platform isn't registered in your Appwrite project:
-- Go to your Appwrite dashboard > Project Settings > Platforms
-- Add a new Android platform with the package name `com.profbiney.vault`
-- Make sure the package name matches exactly what's in your `.env` file
 
 ## 🧪 Testing
 
@@ -192,6 +328,42 @@ npm test
 # or
 yarn test
 ```
+
+## 🚀 Deployment
+
+### Building for Production
+
+To build the application for production:
+
+1. Update the environment variables for production:
+   ```
+   EXPO_PUBLIC_APP_ENV=production
+   ```
+
+2. Build the application:
+   ```bash
+   npx expo build:android  # For Android
+   # or
+   npx expo build:ios      # For iOS
+   ```
+
+3. Follow the Expo build instructions to complete the process
+
+### Publishing to App Stores
+
+1. **Google Play Store**:
+   - Create a Google Play Developer account
+   - Create a new application in the Google Play Console
+   - Upload the APK or AAB file
+   - Fill in the store listing information
+   - Submit for review
+
+2. **Apple App Store**:
+   - Create an Apple Developer account
+   - Create a new application in App Store Connect
+   - Upload the IPA file using Transporter
+   - Fill in the store listing information
+   - Submit for review
 
 ## 🤝 Contributing
 
@@ -213,10 +385,32 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 If you have any questions or need help, please open an issue or contact the maintainers.
 
+## 🔮 Roadmap
+
+Future plans for the BankApp include:
+
+- **Biometric Authentication**: Add fingerprint and face recognition for secure login
+- **Dark Mode**: Implement a dark theme option for better user experience
+- **Push Notifications**: Add real-time notifications for transactions and account updates
+- **Expense Analytics**: Add charts and graphs for visualizing spending patterns
+- **Multiple Languages**: Add support for multiple languages
+- **Offline Mode**: Implement offline functionality for basic features
+
+## 🔒 Security Considerations
+
+- All sensitive information is stored in environment variables, not hardcoded in the source code
+- Authentication is handled securely through Appwrite's authentication system
+- Passwords are validated for strength during registration
+- Payment processing is handled by the server API; PAN/CVC never touch the app and only masked/metadata are stored
+- Session management includes proper timeout and cleanup
+
 ## 🙏 Acknowledgements
 
 - [Expo](https://expo.dev/)
 - [React Native](https://reactnative.dev/)
 - [Appwrite](https://appwrite.io/)
-- [Paystack](https://paystack.com/)
+- [Hono](https://hono.dev/)
+- [Fly.io](https://fly.io/)
 - [NativeWind](https://www.nativewind.dev/)
+- [Zustand](https://github.com/pmndrs/zustand)
+- [Lucide Icons](https://lucide.dev/)

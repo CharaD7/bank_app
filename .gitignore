@@ -4,6 +4,7 @@ npm-debug.log
 yarn-debug.log
 yarn-error.log
 package-lock.json
+bun.lock
 yarn.lock
 
 # Expo
@@ -108,6 +109,10 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Local process logs
+.logs/
+!.logs/.gitkeep
 
 # Testing
 coverage/
