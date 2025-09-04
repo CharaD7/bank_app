@@ -1,87 +1,87 @@
 import { router } from "expo-router";
-import { ArrowLeft, Bell, Globe, Moon, Shield } from "lucide-react-native";
+import { ArrowLeft, Bell, Globe, Shield } from "lucide-react-native";
 import React, { useState } from "react";
-import { StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
+import { useTheme } from "@/context/ThemeContext";
+import { StyleSheet, Switch, Text, TouchableOpacity, View, Animated } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function SettingsScreen() {
+  const { colors, transitionStyle } = useTheme();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(true);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <Animated.View style={[{ flex: 1 }, transitionStyle]}>
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
-          style={styles.backButton}
+          style={[styles.backButton, { backgroundColor: colors.card }]}
         >
-          <ArrowLeft color="#374151" size={24} />
+          <ArrowLeft color={colors.textSecondary} size={24} />
         </TouchableOpacity>
-        <Text style={styles.title}>Settings</Text>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>Settings</Text>
         <View style={styles.placeholder} />
       </View>
 
       <View style={styles.content}>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Notifications</Text>
+        <View style={[styles.section, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Appearance</Text>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
-              <Bell color="#374151" size={20} />
-              <Text style={styles.settingText}>Push Notifications</Text>
+              <View style={styles.themeToggleContainer}>
+                <ThemeToggle size="small" />
+              </View>
+              <Text style={[styles.settingText, { color: colors.textSecondary }]}>Theme</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={[styles.section, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Notifications</Text>
+          <View style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <Bell color={colors.textSecondary} size={20} />
+              <Text style={[styles.settingText, { color: colors.textSecondary }]}>Push Notifications</Text>
             </View>
             <Switch
               value={notificationsEnabled}
               onValueChange={setNotificationsEnabled}
-              trackColor={{ false: "#D1D5DB", true: "#0F766E" }}
+              trackColor={{ false: colors.border, true: colors.tintPrimary }}
               thumbColor={notificationsEnabled ? "#ffffff" : "#ffffff"}
             />
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Appearance</Text>
+        <View style={[styles.section, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Security</Text>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
-              <Moon color="#374151" size={20} />
-              <Text style={styles.settingText}>Dark Mode</Text>
-            </View>
-            <Switch
-              value={darkModeEnabled}
-              onValueChange={setDarkModeEnabled}
-              trackColor={{ false: "#D1D5DB", true: "#0F766E" }}
-              thumbColor={darkModeEnabled ? "#ffffff" : "#ffffff"}
-            />
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Security</Text>
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Shield color="#374151" size={20} />
-              <Text style={styles.settingText}>Biometric Authentication</Text>
+              <Shield color={colors.textSecondary} size={20} />
+              <Text style={[styles.settingText, { color: colors.textSecondary }]}>Biometric Authentication</Text>
             </View>
             <Switch
               value={biometricEnabled}
               onValueChange={setBiometricEnabled}
-              trackColor={{ false: "#D1D5DB", true: "#0F766E" }}
+              trackColor={{ false: colors.border, true: colors.tintPrimary }}
               thumbColor={biometricEnabled ? "#ffffff" : "#ffffff"}
             />
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>General</Text>
+        <View style={[styles.section, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>General</Text>
           <TouchableOpacity style={styles.settingItem}>
             <View style={styles.settingLeft}>
-              <Globe color="#374151" size={20} />
-              <Text style={styles.settingText}>Language</Text>
+              <Globe color={colors.textSecondary} size={20} />
+              <Text style={[styles.settingText, { color: colors.textSecondary }]}>Language</Text>
             </View>
-            <Text style={styles.settingValue}>English</Text>
+            <Text style={[styles.settingValue, { color: colors.textSecondary }]}>English</Text>
           </TouchableOpacity>
         </View>
       </View>
+      </Animated.View>
     </SafeAreaView>
   );
 }
@@ -103,14 +103,12 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "white",
     justifyContent: "center",
     alignItems: "center",
   },
   title: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#1F2937",
   },
   placeholder: {
     width: 44,
@@ -120,7 +118,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   section: {
-    backgroundColor: "white",
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
@@ -136,7 +133,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: "bold",
-    color: "#1F2937",
     marginBottom: 16,
   },
   settingItem: {
@@ -152,11 +148,12 @@ const styles = StyleSheet.create({
   },
   settingText: {
     fontSize: 16,
-    color: "#374151",
     marginLeft: 12,
   },
   settingValue: {
     fontSize: 16,
-    color: "#6B7280",
+  },
+  themeToggleContainer: {
+    marginRight: -8, // Align with other icons
   },
 });
