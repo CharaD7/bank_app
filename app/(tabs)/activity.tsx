@@ -434,101 +434,22 @@ export default function ActivityScreen() {
 		fetchPayments(true);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [typeFilter, statusFilter]);
+	// Simplified transaction accessor - filtering is now done in unified allActivities
 	const getFilteredTransactions = () => {
 		// Use only real transaction data, no mock fallback
-		const sourceTransactions = Array.isArray(transactions) ? transactions : [];
-		if (!Array.isArray(sourceTransactions)) return [];
-
-		let filtered = [...sourceTransactions];
-
-		// Apply date filter first
-		const now = new Date();
-		switch (dateFilter) {
-			case "today":
-				filtered = filtered.filter((t) => {
-					const transactionDate = new Date(t.date);
-					return transactionDate.toDateString() === now.toDateString();
-				});
-				break;
-			case "week":
-				const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-				filtered = filtered.filter((t) => new Date(t.date) >= weekAgo);
-				break;
-			case "month":
-				const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-				filtered = filtered.filter((t) => new Date(t.date) >= startOfMonth);
-				break;
-			case "year":
-				const startOfYear = new Date(now.getFullYear(), 0, 1);
-				filtered = filtered.filter((t) => new Date(t.date) >= startOfYear);
-				break;
-		}
-
-		// Apply income/expense filter
-		filtered = filtered.filter((transaction) => {
-			if (transaction.amount > 0) return filters.income;
-			if (transaction.amount < 0) return filters.expense;
-			return true;
-		});
-
-		// Apply type filter
-		filtered = filtered.filter((t) => (typeFilter as any)[t.type]);
-
-		// Apply status filter
-		filtered = filtered.filter((t) => (statusFilter as any)[t.status]);
-
-		return filtered;
+		return Array.isArray(transactions) ? transactions : [];
 	};
 
+	// Simplified activity accessor - filtering is now done in unified allActivities
 	const activityCards = useMemo(() => {
 		// Use only real activity data, no mock fallback
-		const sourceActivity = Array.isArray(activity) ? activity : [];
-		const events: ActivityEvent[] = sourceActivity.filter((evt) => {
-			// Apply category filters
-			if (evt.category === 'transaction') {
-				const amt = typeof evt.amount === 'number' ? evt.amount : 0;
-				if (amt > 0 && !filters.income) return false;
-				if (amt < 0 && !filters.expense) return false;
-				// If no amount, include if either income or expense is on
-				if (amt === 0 && !filters.income && !filters.expense) return false;
-			}
-			if (evt.category === 'account' && !filters.account) return false;
-			if (evt.category === 'card' && !filters.card) return false;
-
-			// Apply status filters
-			if (evt.status) {
-				const eventStatus = evt.status;
-				if (!(statusFilter as any)[eventStatus]) return false;
-			}
-
-			return true;
-		});
-
-		// Date filter for activity timeline
-		const now2 = new Date();
-		const inRange = (ts: string) => {
-			const d = new Date(ts);
-			switch (dateFilter) {
-				case "today":
-					return d.toDateString() === now2.toDateString();
-				case "week":
-					return d >= new Date(now2.getTime() - 7 * 24 * 60 * 60 * 1000);
-				case "month":
-					return d >= new Date(now2.getFullYear(), now2.getMonth(), 1);
-				case "year":
-					return d >= new Date(now2.getFullYear(), 0, 1);
-				default:
-					return true;
-			}
-		};
-
-		return events.filter((e) => inRange(e.timestamp));
-	}, [activity, filters, dateFilter, statusFilter]);
+		return Array.isArray(activity) ? activity : [];
+	}, [activity]);
 
 	const [selected, setSelected] = useState<ActivityEvent | null>(null);
 	const [showDetail, setShowDetail] = useState(false);
 
-	const filteredTransactions = getFilteredTransactions();
+	const sourceTransactions = getFilteredTransactions();
 
 	// Create unified, deduplicated activity list
 	const allActivities = useMemo(() => {
@@ -567,8 +488,8 @@ export default function ActivityScreen() {
 			}
 		});
 
-		// Add filtered transactions from real data only (only if not already represented)
-		filteredTransactions.forEach(tx => {
+		// Add source transactions from real data only (only if not already represented)
+		sourceTransactions.forEach(tx => {
 			// Check if this transaction is already represented in centralized activities
 			const hasInCentralized = items.some(item => 
 				item.type === 'centralized' && item.data.transactionId === tx.id
@@ -596,7 +517,7 @@ export default function ActivityScreen() {
 				evt.transactionId === payment.id ||
 				(evt.type && evt.type.includes('payment') && evt.title.includes(payment.id.slice(-6)))
 			);
-			const hasTransaction = filteredTransactions.some(tx => tx.id === payment.id);
+			const hasTransaction = sourceTransactions.some(tx => tx.id === payment.id);
 			
 			if (!hasInCentralized && !hasActivity && !hasTransaction) {
 				items.push({
@@ -613,10 +534,97 @@ export default function ActivityScreen() {
 			self.findIndex(i => i.id === item.id) === index
 		);
 
-		return uniqueItems.sort((a, b) => 
+		// Apply filters to unified items
+		const filteredItems = uniqueItems.filter((item) => {
+			// Date filter
+			const itemDate = new Date(item.timestamp);
+			const now = new Date();
+			let passesDateFilter = true;
+			
+			switch (dateFilter) {
+				case "today":
+					passesDateFilter = itemDate.toDateString() === now.toDateString();
+					break;
+				case "week":
+					const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+					passesDateFilter = itemDate >= weekAgo;
+					break;
+				case "month":
+					const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+					passesDateFilter = itemDate >= startOfMonth;
+					break;
+				case "year":
+					const startOfYear = new Date(now.getFullYear(), 0, 1);
+					passesDateFilter = itemDate >= startOfYear;
+					break;
+				default:
+					passesDateFilter = true;
+			}
+			
+			if (!passesDateFilter) return false;
+			
+			// Category filter logic for each item type
+			let passesCategoryFilter = false;
+			
+			if (item.type === 'centralized' || item.type === 'activity') {
+				const eventData = item.data;
+				if (eventData.category === 'transaction') {
+					const amt = typeof eventData.amount === 'number' ? eventData.amount : 0;
+					if (amt > 0 && filters.income) passesCategoryFilter = true;
+					if (amt < 0 && filters.expense) passesCategoryFilter = true;
+					if (amt === 0 && (filters.income || filters.expense)) passesCategoryFilter = true;
+				} else if (eventData.category === 'account' && filters.account) {
+					passesCategoryFilter = true;
+				} else if (eventData.category === 'card' && filters.card) {
+					passesCategoryFilter = true;
+				}
+			} else if (item.type === 'transaction') {
+				const txData = item.data;
+				if (txData.amount > 0 && filters.income) passesCategoryFilter = true;
+				if (txData.amount < 0 && filters.expense) passesCategoryFilter = true;
+			} else if (item.type === 'payment') {
+				// Payments can be considered as transactions, categorize based on context
+				if (filters.expense || filters.income) passesCategoryFilter = true;
+			}
+			
+			if (!passesCategoryFilter) return false;
+			
+			// Status filter logic
+			let passesStatusFilter = false;
+			
+			if (item.type === 'centralized' || item.type === 'activity') {
+				const eventStatus = item.data.status;
+				if (eventStatus && (statusFilter as any)[eventStatus]) {
+					passesStatusFilter = true;
+				} else if (!eventStatus && statusFilter.info) {
+					// Items without status are considered "info"
+					passesStatusFilter = true;
+				}
+			} else if (item.type === 'transaction') {
+				const txStatus = item.data.status;
+				if (txStatus && (statusFilter as any)[txStatus]) {
+					passesStatusFilter = true;
+				} else if (!txStatus && statusFilter.completed) {
+					// Transactions without explicit status are usually completed
+					passesStatusFilter = true;
+				}
+			} else if (item.type === 'payment') {
+				const paymentStatus = item.data.status;
+				// Map payment statuses to activity screen statuses
+				if (paymentStatus === 'captured' && statusFilter.completed) passesStatusFilter = true;
+				else if (paymentStatus === 'authorized' && statusFilter.pending) passesStatusFilter = true;
+				else if (paymentStatus === 'failed' && statusFilter.failed) passesStatusFilter = true;
+				else if (paymentStatus === 'refunded' && statusFilter.reversed) passesStatusFilter = true;
+				else if (!paymentStatus && statusFilter.info) passesStatusFilter = true;
+			}
+			
+			return passesStatusFilter;
+		});
+		
+		return filteredItems.sort((a, b) => 
 			new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
 		);
-	}, [activityCards, filteredTransactions, payments, suppressAllLogs, centralizedActivities]);
+	}, [activityCards, sourceTransactions, payments, suppressAllLogs, centralizedActivities, filters, dateFilter, statusFilter]);
 
 	return (
 		<SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>

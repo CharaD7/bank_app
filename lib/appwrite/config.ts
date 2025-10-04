@@ -39,6 +39,9 @@ export const appwriteConfig = {
   // Analytics collection (optional)
   analyticsCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_ANALYTICS_COLLECTION_ID', 'APPWRITE_ANALYTICS_COLLECTION_ID'], 'analytics_events'),
   
+  // Payments collection (required for withdrawals and transactions)
+  paymentsCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_PAYMENTS_COLLECTION_ID', 'APPWRITE_PAYMENTS_COLLECTION_ID'], 'payments'),
+  
   // Biometric collections (optional - will use fallback names if not configured)
   biometricTokensCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_BIOMETRIC_TOKENS_COLLECTION_ID', 'APPWRITE_BIOMETRIC_TOKENS_COLLECTION_ID'], 'biometric_tokens'),
   biometricAuditCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_BIOMETRIC_AUDIT_COLLECTION_ID', 'APPWRITE_BIOMETRIC_AUDIT_COLLECTION_ID'], 'biometric_audit'),
@@ -169,6 +172,10 @@ export const collections = {
   },
   analytics: {
     id: appwriteConfig.analyticsCollectionId,
+    databaseId: appwriteConfig.databaseId,
+  },
+  payments: {
+    id: appwriteConfig.paymentsCollectionId,
     databaseId: appwriteConfig.databaseId,
   },
   biometricTokens: {

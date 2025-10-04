@@ -214,9 +214,15 @@ export class AppwritePaymentService {
       // Transform data for Appwrite schema
       const appwriteData = this.transformPaymentForAppwrite(paymentData, userId);
       
-      // Create document in Appwrite
+      // Create document in Appwrite with collection fallback
+      const paymentsCollectionId = collections.payments?.id || 'payments';
+      
+      if (!paymentsCollectionId || paymentsCollectionId === 'payments') {
+        logger.warn('PAYMENT_SERVICE', 'Payments collection not properly configured, attempting to use default');
+      }
+      
       const document = await databaseService.createDocument(
-        collections.payments.id,
+        paymentsCollectionId,
         appwriteData
       );
 
@@ -289,9 +295,11 @@ export class AppwritePaymentService {
         appwriteUpdateData.metadata = updateData.metadata;
       }
 
-      // Update document in Appwrite
+      // Update document in Appwrite with collection fallback
+      const paymentsCollectionId = collections.payments?.id || 'payments';
+      
       const document = await databaseService.updateDocument(
-        collections.payments.id,
+        paymentsCollectionId,
         paymentId,
         appwriteUpdateData
       );
