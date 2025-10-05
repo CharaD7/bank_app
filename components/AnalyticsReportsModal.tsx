@@ -30,8 +30,10 @@ import {
   type ReportFormat,
   type ReportPeriod 
 } from '@/lib/appwrite';
+import { fileStorageService } from '@/lib/storage/fileStorage.service';
 import { logger } from '@/lib/logger';
 import ReportStatusModal from '@/components/ReportStatusModal';
+import ReportPreviewModal, { ReportPreviewData } from '@/components/ReportPreviewModal';
 
 const { width } = Dimensions.get('window');
 
@@ -48,9 +50,9 @@ const PERIOD_OPTIONS: { value: ReportPeriod; label: string }[] = [
 ];
 
 const FORMAT_OPTIONS: { value: ReportFormat; label: string; icon: string }[] = [
-  { value: 'csv', label: 'CSV Spreadsheet', icon: 'document-text' },
-  { value: 'json', label: 'JSON Data', icon: 'code' },
-  { value: 'pdf', label: 'PDF Report', icon: 'document' },
+  { value: 'csv', label: 'CSV Spreadsheet', icon: 'document-text-outline' },
+  { value: 'json', label: 'JSON Data', icon: 'code-slash-outline' },
+  { value: 'pdf', label: 'PDF Report', icon: 'document-outline' },
 ];
 
 export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsReportsModalProps) {
@@ -75,6 +77,13 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
     fileName: '',
     filePath: '',
     errorMessage: ''
+  });
+
+  // Report Preview Modal state
+  const [reportPreviewModal, setReportPreviewModal] = useState({
+    visible: false,
+    reportData: null as ReportPreviewData | null,
+    isLoading: false,
   });
 
   // Initialize with active card selected
@@ -132,14 +141,12 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
     }
 
     setIsGeneratingReport(true);
-    // Show loading status in modal
-    setReportStatusModal({
+    
+    // Show preview loading
+    setReportPreviewModal({
       visible: true,
-      status: 'loading',
-      reportFormat: selectedFormat,
-      fileName: '',
-      filePath: '',
-      errorMessage: ''
+      reportData: null,
+      isLoading: true,
     });
 
     try {
@@ -151,23 +158,34 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         includeInsights
       };
 
-      const filePath = await analyticsService.generateReport(reportOptions);
-      const fileName = filePath.split('/').pop(); // Extract filename from path
+      // Use the new generateReportContent method
+      const { content, fileName: generatedFileName } = await analyticsService.generateReportContent(reportOptions);
       
-      // Show success status
-      setReportStatusModal({
+      // Prepare preview data
+      const reportData: ReportPreviewData = {
+        content,
+        fileName: generatedFileName,
+        format: selectedFormat as 'csv' | 'json' | 'html' | 'pdf',
+        title: `Financial Report - ${PERIOD_OPTIONS.find(p => p.value === selectedPeriod)?.label || selectedPeriod}`,
+      };
+      
+      // Show preview
+      setReportPreviewModal({
         visible: true,
-        status: 'success',
-        reportFormat: selectedFormat,
-        fileName: fileName || '',
-        filePath,
-        errorMessage: ''
+        reportData,
+        isLoading: false,
       });
 
     } catch (error) {
       logger.error('ANALYTICS_MODAL', 'Failed to generate report:', error);
       
-      // Show error status
+      // Close preview and show error status
+      setReportPreviewModal({
+        visible: false,
+        reportData: null,
+        isLoading: false,
+      });
+      
       setReportStatusModal({
         visible: true,
         status: 'error',
@@ -189,9 +207,16 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
     }
     
     try {
-      await analyticsService.shareReport(pathToShare);
-      // Close the status modal after sharing
-      setReportStatusModal(prev => ({ ...prev, visible: false }));
+      // Determine MIME type from format
+      const mimeType = fileStorageService.getMimeType(reportStatusModal.reportFormat as 'csv' | 'json' | 'html' | 'pdf');
+      const success = await fileStorageService.shareFile(pathToShare, mimeType);
+      
+      if (success) {
+        // Close the status modal after sharing
+        setReportStatusModal(prev => ({ ...prev, visible: false }));
+      } else {
+        Alert.alert('Error', 'Sharing not available on this device.');
+      }
     } catch (error) {
       logger.error('ANALYTICS_MODAL', 'Failed to share report:', error);
       Alert.alert('Error', 'Failed to share report. Please try again.');
@@ -205,6 +230,91 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
   const retryReportGeneration = () => {
     closeReportStatusModal();
     generateReport();
+  };
+
+  // Preview Modal handlers
+  const handlePreviewClose = () => {
+    setReportPreviewModal({
+      visible: false,
+      reportData: null,
+      isLoading: false,
+    });
+  };
+
+  const handlePreviewSave = async (reportData: ReportPreviewData) => {
+    try {
+      // Save the content using the file storage service
+      const saveResult = await fileStorageService.saveFileToDevice({
+        content: reportData.content,
+        fileName: reportData.fileName,
+        fileType: reportData.format,
+        location: 'documents',
+        requestPermissions: true,
+        showSuccessMessage: true
+      });
+      
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || 'Failed to save report file');
+      }
+      
+      const filePath = saveResult.filePath!;
+      const fileName = saveResult.fileName!;
+      
+      // Close preview and show success status
+      setReportPreviewModal({
+        visible: false,
+        reportData: null,
+        isLoading: false,
+      });
+      
+      setReportStatusModal({
+        visible: true,
+        status: 'success',
+        reportFormat: reportData.format,
+        fileName,
+        filePath,
+        errorMessage: ''
+      });
+    } catch (error) {
+      logger.error('ANALYTICS_MODAL', 'Failed to save report from preview:', error);
+      throw error; // Let the preview modal handle the error display
+    }
+  };
+
+  const handlePreviewShare = async (reportData: ReportPreviewData) => {
+    try {
+      // First save the file temporarily
+      const saveResult = await fileStorageService.saveFileToDevice({
+        content: reportData.content,
+        fileName: reportData.fileName,
+        fileType: reportData.format,
+        location: 'cache', // Use cache for temporary sharing
+        requestPermissions: false,
+        showSuccessMessage: false
+      });
+      
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || 'Failed to prepare file for sharing');
+      }
+      
+      // Share the file
+      const mimeType = fileStorageService.getMimeType(reportData.format);
+      const success = await fileStorageService.shareFile(saveResult.filePath!, mimeType);
+      
+      if (!success) {
+        throw new Error('Sharing not available on this device');
+      }
+      
+      // Close preview after successful sharing
+      setReportPreviewModal({
+        visible: false,
+        reportData: null,
+        isLoading: false,
+      });
+    } catch (error) {
+      logger.error('ANALYTICS_MODAL', 'Failed to share report from preview:', error);
+      throw error; // Let the preview modal handle the error display
+    }
   };
 
   const renderAnalyticsTab = () => {
@@ -612,7 +722,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
           >
             <View style={styles.optionContent}>
               <View style={styles.optionLabelWithIcon}>
-                <Ionicons name="bulb" size={20} color={colors.tintPrimary} style={{ marginRight: 8 }} />
+                <Ionicons name="bulb-outline" size={20} color={colors.tintPrimary} style={{ marginRight: 8 }} />
                 <Text style={[styles.optionLabel, { color: colors.textPrimary, fontWeight: includeInsights ? '600' : '500' }]}>
                   Financial Insights
                 </Text>
@@ -648,7 +758,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
           >
             <View style={styles.optionContent}>
               <View style={styles.optionLabelWithIcon}>
-                <Ionicons name="bar-chart" size={20} color={colors.tintPrimary} style={{ marginRight: 8 }} />
+                <Ionicons name="bar-chart-outline" size={20} color={colors.tintPrimary} style={{ marginRight: 8 }} />
                 <Text style={[styles.optionLabel, { color: colors.textPrimary, fontWeight: includeCharts ? '600' : '500' }]}>
                   Charts & Graphs
                 </Text>
@@ -712,12 +822,12 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
 
   const getInsightIcon = (type: string): string => {
     switch (type) {
-      case 'spending_pattern': return 'trending-up';
-      case 'income_trend': return 'arrow-up';
-      case 'category_alert': return 'warning';
-      case 'balance_warning': return 'alert';
-      case 'recommendation': return 'bulb';
-      default: return 'information';
+      case 'spending_pattern': return 'trending-up-outline';
+      case 'income_trend': return 'arrow-up-outline';
+      case 'category_alert': return 'warning-outline';
+      case 'balance_warning': return 'alert-circle-outline';
+      case 'recommendation': return 'bulb-outline';
+      default: return 'information-circle-outline';
     }
   };
 
@@ -801,6 +911,16 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         onClose={closeReportStatusModal}
         onShare={shareReport}
         onRetry={retryReportGeneration}
+      />
+      
+      {/* Report Preview Modal */}
+      <ReportPreviewModal
+        visible={reportPreviewModal.visible}
+        reportData={reportPreviewModal.reportData}
+        isLoading={reportPreviewModal.isLoading}
+        onClose={handlePreviewClose}
+        onSave={handlePreviewSave}
+        onShare={handlePreviewShare}
       />
     </Modal>
   );
