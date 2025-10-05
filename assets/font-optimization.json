@@ -1,0 +1,39 @@
+{
+  "fontFamily": {
+    "Inter-Regular": [
+      "Inter-Regular",
+      "system-ui",
+      "-apple-system",
+      "BlinkMacSystemFont"
+    ],
+    "Inter-Medium": [
+      "Inter-Medium",
+      "Inter-Regular",
+      "system-ui"
+    ],
+    "Inter-SemiBold": [
+      "Inter-SemiBold",
+      "Inter-Medium",
+      "system-ui"
+    ],
+    "Inter-Bold": [
+      "Inter-Bold",
+      "Inter-SemiBold",
+      "system-ui"
+    ],
+    "Inter-Light": [
+      "Inter-Light",
+      "Inter-Regular",
+      "system-ui"
+    ]
+  },
+  "preload": [
+    "Inter-Regular",
+    "Inter-Medium"
+  ],
+  "lazyLoad": [
+    "Inter-Light",
+    "Inter-SemiBold",
+    "Inter-Bold"
+  ]
+}

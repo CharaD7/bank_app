@@ -1,0 +1,31 @@
+{
+  "images": {
+    "quality": {
+      "jpg": 85,
+      "png": 90,
+      "webp": 85
+    },
+    "maxWidth": 1024,
+    "maxHeight": 1024,
+    "generateSizes": [
+      {
+        "suffix": "",
+        "scale": 1
+      },
+      {
+        "suffix": "@2x",
+        "scale": 2
+      },
+      {
+        "suffix": "@3x",
+        "scale": 3
+      }
+    ]
+  },
+  "fonts": {
+    "subset": {
+      "enabled": true,
+      "characters": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?$€£¥₵₦₡₨₹₽₩₪₫₴₱₲₸₼₻₺₭₦€$¢£¥₵₦₡₨₹₽₩₪₫₴₱₲₸₼₻₺₭₦ &()[]{}+-=/*%@#:;\"'"
+    }
+  }
+}
