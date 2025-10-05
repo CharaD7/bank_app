@@ -22,6 +22,7 @@ import { useAlert } from "@/context/AlertContext";
 import { useBiometricToast } from "@/context/BiometricToastContext";
 import CustomButton from "@/components/CustomButton";
 import { getBadgeVisuals } from "@/theme/badge-utils";
+import type { ChipTone } from "@/theme/variants";
 import { TransactionItem } from "@/components/TransactionItem";
 import { useApp } from "@/context/AppContext";
 import { ActivityEvent } from "@/types/activity";
@@ -32,8 +33,66 @@ import LoadingAnimation from '@/components/LoadingAnimation';
 import { useLoading, LOADING_CONFIGS } from '@/hooks/useLoading';
 import { getApiBase } from '@/lib/api';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
+import { memo, useCallback, useRef } from 'react';
 
 type Payment = { id: string; status: string; amount?: number; currency?: string; created?: string };
+
+/**
+ * Memoized filter button component for optimal performance
+ * Prevents unnecessary re-renders when parent component updates
+ * 
+ * @param filterKey - Unique identifier for the filter
+ * @param isSelected - Whether the filter is currently active
+ * @param label - Display text for the button
+ * @param icon - Optional icon component to display
+ * @param tone - Visual theme/color scheme
+ * @param onToggle - Callback function when button is pressed
+ * @param colors - Theme colors object
+ */
+const FilterButton = memo(({ 
+	filterKey, 
+	isSelected, 
+	label, 
+	icon, 
+	tone, 
+	onToggle,
+	colors 
+}: {
+	filterKey: string;
+	isSelected: boolean;
+	label: string;
+	icon?: React.ReactNode;
+	tone: ChipTone;
+	onToggle: (key: string) => void;
+	colors: any;
+}) => {
+	// Calculate visual properties based on selection state and theme
+	const v = getBadgeVisuals(colors, { tone, selected: isSelected, size: 'md' });
+	
+	// Memoized press handler to prevent function recreation on each render
+	const handlePress = useCallback(() => onToggle(filterKey), [filterKey, onToggle]);
+	
+	return (
+		<View 
+			style={{ marginRight: 5 }} 
+			accessibilityLabel={`${label} filter, ${isSelected ? 'selected' : 'not selected'}`}
+			accessibilityRole="button"
+			accessibilityHint={`Toggle ${label.toLowerCase()} filter`}
+		>
+			<CustomButton
+				size="sm"
+				isFilterAction
+				variant={v.textColor === '#fff' ? 'primary' : 'secondary'}
+				onPress={handlePress}
+				title={label}
+				leftIcon={icon}
+				style={{ backgroundColor: v.backgroundColor, borderColor: v.borderColor, borderWidth: 1 }}
+				textStyle={{ color: v.textColor }}
+			/>
+		</View>
+	);
+});
 
 export default function ActivityScreen() {
 
@@ -60,6 +119,26 @@ export default function ActivityScreen() {
 	const refreshIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
 	const PAY_PAGE_SIZE = 10;
 	const [nextPaymentsCursor, setNextPaymentsCursor] = React.useState<string | null>(null);
+	
+	// Debounced save references for performance
+	const saveFiltersTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	const saveTypeFilterTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	const saveStatusFilterTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	
+	// Debounced save function to batch AsyncStorage operations
+	const debouncedSave = useCallback((key: string, data: any, timeoutRef: React.MutableRefObject<NodeJS.Timeout | null>, delay: number = 500) => {
+		if (timeoutRef.current) {
+			clearTimeout(timeoutRef.current);
+		}
+		timeoutRef.current = setTimeout(async () => {
+			try {
+				await AsyncStorage.setItem(key, JSON.stringify(data));
+				logger.debug('ACTIVITY', `Saved ${key}`, data);
+			} catch (error) {
+				logger.warn('ACTIVITY', `Failed to save ${key}:`, error);
+			}
+		}, delay);
+	}, []);
 
 	// Maps Activity screen status chips to payment statuses
 	const paymentStatusMap: Record<string, string> = {
@@ -125,12 +204,22 @@ export default function ActivityScreen() {
 		}
 	}, [autoRefreshEnabled, performAutoRefresh]);
 	
-	// Cleanup auto-refresh on unmount
+	// Cleanup auto-refresh and debounced timeouts on unmount
 	React.useEffect(() => {
 		return () => {
 			if (refreshIntervalRef.current) {
 				clearInterval(refreshIntervalRef.current);
 				refreshIntervalRef.current = null;
+			}
+			// Clear debounced save timeouts
+			if (saveFiltersTimeoutRef.current) {
+				clearTimeout(saveFiltersTimeoutRef.current);
+			}
+			if (saveTypeFilterTimeoutRef.current) {
+				clearTimeout(saveTypeFilterTimeoutRef.current);
+			}
+			if (saveStatusFilterTimeoutRef.current) {
+				clearTimeout(saveStatusFilterTimeoutRef.current);
 			}
 		};
 	}, []);
@@ -185,64 +274,100 @@ export default function ActivityScreen() {
 	const [typeFilter, setTypeFilter] = useState({ deposit: true, transfer: true, withdraw: true, payment: true });
 	const [statusFilter, setStatusFilter] = useState({ completed: true, pending: true, failed: true, reversed: true, info: true });
 
+	// Load saved category filters on mount
 	React.useEffect(() => {
 		(async () => {
 			try {
 				const raw = await AsyncStorage.getItem('activityFilters');
 				if (raw) {
 					const parsed = JSON.parse(raw);
-					setFilters((prev) => ({ ...prev, ...parsed }));
+					// Validate parsed data has expected structure
+					if (parsed && typeof parsed === 'object') {
+						setFilters((prev) => ({ ...prev, ...parsed }));
+						logger.info('ACTIVITY', 'Loaded saved category filters', parsed);
+					}
 				}
-			} catch {}
+			} catch (error) {
+				logger.warn('ACTIVITY', 'Failed to load saved category filters:', error);
+			}
 		})();
 	}, []);
 
+	// Save category filters when they change (debounced)
 	React.useEffect(() => {
-		AsyncStorage.setItem('activityFilters', JSON.stringify(filters)).catch(() => {});
-	}, [filters]);
+		debouncedSave('activityFilters', filters, saveFiltersTimeoutRef);
+	}, [filters, debouncedSave]);
 
+	// Load saved type and status filters on mount
 	React.useEffect(() => {
 		(async () => {
 			try {
 				const t = await AsyncStorage.getItem('txTypeFilter');
-				if (t) setTypeFilter(prev => ({ ...prev, ...JSON.parse(t) }));
+				if (t) {
+					const parsedType = JSON.parse(t);
+					if (parsedType && typeof parsedType === 'object') {
+						setTypeFilter(prev => ({ ...prev, ...parsedType }));
+						logger.info('ACTIVITY', 'Loaded saved type filters', parsedType);
+					}
+				}
 				const s = await AsyncStorage.getItem('txStatusFilter');
-				if (s) setStatusFilter(prev => ({ ...prev, ...JSON.parse(s) }));
-			} catch {}
+				if (s) {
+					const parsedStatus = JSON.parse(s);
+					if (parsedStatus && typeof parsedStatus === 'object') {
+						setStatusFilter(prev => ({ ...prev, ...parsedStatus }));
+						logger.info('ACTIVITY', 'Loaded saved status filters', parsedStatus);
+					}
+				}
+			} catch (error) {
+				logger.warn('ACTIVITY', 'Failed to load saved type/status filters:', error);
+			}
 		})();
 	}, []);
+	
+	// Save type filters when they change (debounced)
 	React.useEffect(() => {
-		AsyncStorage.setItem('txTypeFilter', JSON.stringify(typeFilter)).catch(() => {});
-	}, [typeFilter]);
+		debouncedSave('txTypeFilter', typeFilter, saveTypeFilterTimeoutRef);
+	}, [typeFilter, debouncedSave]);
+	
+	// Save status filters when they change (debounced)
 	React.useEffect(() => {
-		AsyncStorage.setItem('txStatusFilter', JSON.stringify(statusFilter)).catch(() => {});
-	}, [statusFilter]);
+		debouncedSave('txStatusFilter', statusFilter, saveStatusFilterTimeoutRef);
+	}, [statusFilter, debouncedSave]);
 
-	const toggleFilter = (key: keyof typeof filters) => {
+	const toggleFilter = useCallback((key: keyof typeof filters) => {
 		setFilters(prev => {
 			const next = { ...prev, [key]: !prev[key] };
 			// Enforce at least one on
 			if (!next.income && !next.expense && !next.account && !next.card) {
+				Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 				return prev; // ignore toggle that would turn all off
 			}
+			// Provide haptic feedback for successful toggle
+			Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 			return next;
 		});
-	};
+	}, []);
 
 	// toggleType removed (not used) to satisfy linter
 
-	const toggleStatus = (key: keyof typeof statusFilter) => {
+	const toggleStatus = useCallback((key: keyof typeof statusFilter) => {
 		setStatusFilter(prev => {
 			const next = { ...prev, [key]: !prev[key] };
 			// Enforce at least one status filter is on
 			if (!next.completed && !next.pending && !next.failed && !next.reversed && !next.info) {
+				Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 				return prev;
 			}
+			// Provide haptic feedback for successful toggle
+			Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 			return next;
 		});
-	};
+	}, []);
 
-	const setAllOn = () => setFilters({ income: true, expense: true, account: true, card: true });
+	const setAllOn = useCallback(() => {
+		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+		setFilters({ income: true, expense: true, account: true, card: true });
+	}, []);
 
 	const handleClearActivity = async () => {
 		try {
@@ -661,7 +786,15 @@ export default function ActivityScreen() {
 				</View>
 
 				<View style={{ marginBottom: 10 }}>
-					<ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterTabs} contentContainerStyle={styles.filterScrollContent}>
+				<ScrollView 
+					horizontal 
+					showsHorizontalScrollIndicator={false} 
+					style={styles.filterTabs} 
+					contentContainerStyle={styles.filterScrollContent}
+					decelerationRate="fast"
+					bounces={false}
+					overScrollMode="never"
+				>
 					{(() => {
 						const v = getBadgeVisuals(colors, { tone: 'neutral', size: 'md' });
 						return (
@@ -683,16 +816,22 @@ export default function ActivityScreen() {
 						const v = getBadgeVisuals(colors, { tone: 'success', selected: filters.income, size: 'md' });
 						return (
 							<View style={{ marginRight: 5 }}>
-								<CustomButton
-									size="sm"
-									isFilterAction
-									variant={v.textColor === '#fff' ? 'primary' : 'secondary'}
-									onPress={() => toggleFilter('income')}
-									title="Income"
-									leftIcon={<ArrowDownLeft size={14} color={v.textColor as string} />}
-									style={{ backgroundColor: v.backgroundColor, borderColor: v.borderColor, borderWidth: 1 }}
-									textStyle={{ color: v.textColor }}
-								/>
+								<View
+									accessibilityLabel={`Income filter, ${filters.income ? 'selected' : 'not selected'}`}
+									accessibilityRole="button"
+									accessibilityHint="Toggle income transactions filter"
+								>
+									<CustomButton
+										size="sm"
+										isFilterAction
+										variant={v.textColor === '#fff' ? 'primary' : 'secondary'}
+										onPress={() => toggleFilter('income')}
+										title="Income"
+										leftIcon={<ArrowDownLeft size={14} color={v.textColor as string} />}
+										style={{ backgroundColor: v.backgroundColor, borderColor: v.borderColor, borderWidth: 1 }}
+										textStyle={{ color: v.textColor }}
+									/>
+								</View>
 							</View>
 						);
 					})()}
@@ -757,7 +896,15 @@ export default function ActivityScreen() {
 				<View>
 				{/* Activity Status Filters */}
 				<View style={{ marginBottom: 10 }}>
-					<ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterTabs} contentContainerStyle={styles.filterScrollContent}>
+					<ScrollView 
+						horizontal 
+						showsHorizontalScrollIndicator={false} 
+						style={styles.filterTabs} 
+						contentContainerStyle={styles.filterScrollContent}
+						decelerationRate="fast"
+						bounces={false}
+						overScrollMode="never"
+					>
 						{(['completed','pending','failed','reversed','info'] as const).map(key => {
 							const tone = key === 'completed' ? 'success' : 
 										key === 'failed' ? 'danger' : 
