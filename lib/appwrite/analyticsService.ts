@@ -79,7 +79,7 @@ export interface AnalyticsInsight {
   severity?: 'info' | 'warning' | 'success' | 'danger';
 }
 
-export type ReportFormat = 'pdf' | 'csv' | 'json';
+export type ReportFormat = 'pdf' | 'csv' | 'json' | 'html';
 export type ReportPeriod = '7d' | '30d' | '90d' | '1y' | 'custom';
 
 export interface ReportOptions {
@@ -145,11 +145,11 @@ class AnalyticsService {
   }
 
   /**
-   * Generate and download report
+   * Generate report content and return as string (for new storage system)
    */
-  async generateReport(options: ReportOptions): Promise<string> {
+  async generateReportContent(options: ReportOptions): Promise<{ content: string; fileName: string }> {
     try {
-      logger.info('ANALYTICS', 'Generating report', options);
+      logger.info('ANALYTICS', 'Generating report content', options);
 
       // Generate analytics data
       const analytics = await this.generateAnalytics(
@@ -159,28 +159,76 @@ class AnalyticsService {
         options.customEndDate
       );
 
-      // Generate report based on format
-      let filePath: string;
+      // Generate report content based on format
+      let content: string;
+      const timestamp = new Date().toISOString().split('T')[0];
+      let fileName: string;
+
       switch (options.format) {
         case 'csv':
-          filePath = await this.generateCSVReport(analytics, options);
+          content = this.generateCSVContent(analytics, options);
+          fileName = `financial-report-${timestamp}.csv`;
           break;
         case 'json':
-          filePath = await this.generateJSONReport(analytics, options);
+          content = this.generateJSONContent(analytics, options);
+          fileName = `financial-report-${timestamp}.json`;
+          break;
+        case 'html':
+          content = this.generateHTMLReport(analytics, options);
+          fileName = `financial-report-${timestamp}.html`;
           break;
         case 'pdf':
-          filePath = await this.generatePDFReport(analytics, options);
+          // For PDF, return HTML content that can be converted by the storage service
+          content = this.generateHTMLReport(analytics, options);
+          fileName = `financial-report-${timestamp}.pdf`;
           break;
         default:
           throw new Error(`Unsupported report format: ${options.format}`);
       }
 
       // Log report generation activity (fire-and-forget)
-      this.logReportGenerationActivity(options, filePath).catch(error => {
+      this.logReportContentGeneration(options, analytics).catch(error => {
         logger.warn('ANALYTICS', 'Failed to log report generation activity', error);
       });
 
-      logger.info('ANALYTICS', 'Report generated successfully', { filePath, format: options.format });
+      logger.info('ANALYTICS', 'Report content generated successfully', { 
+        fileName, 
+        format: options.format,
+        contentLength: content.length 
+      });
+      
+      return { content, fileName };
+
+    } catch (error) {
+      logger.error('ANALYTICS', 'Failed to generate report content:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Legacy method - Generate and save report to file system
+   * @deprecated Use generateReportContent() with the new storage services instead
+   */
+  async generateReport(options: ReportOptions): Promise<string> {
+    try {
+      logger.warn('ANALYTICS', 'Using deprecated generateReport method. Consider migrating to generateReportContent() with storage services.');
+      
+      const { content, fileName } = await this.generateReportContent(options);
+      
+      // Use old file system approach for backward compatibility
+      let documentDir = FileSystem.documentDirectory;
+      if (!documentDir) {
+        documentDir = FileSystem.cacheDirectory;
+      }
+      
+      if (!documentDir) {
+        throw new Error('No suitable directory available for file storage.');
+      }
+
+      const filePath = `${documentDir}${fileName}`;
+      await FileSystem.writeAsStringAsync(filePath, content);
+      
+      logger.info('ANALYTICS', 'Legacy report generated successfully', { filePath, format: options.format });
       return filePath;
 
     } catch (error) {
@@ -210,7 +258,53 @@ class AnalyticsService {
   }
 
   /**
-   * Log report generation activity using centralized activity logger
+   * Log report content generation activity (for new storage system)
+   */
+  private async logReportContentGeneration(options: ReportOptions, analytics: AnalyticsData): Promise<void> {
+    try {
+      // Get current user from auth context
+      const { authService } = await import('./auth');
+      const user = await authService.getCurrentUser();
+      if (!user) {
+        logger.warn('ANALYTICS', 'Cannot log report activity - user not authenticated');
+        return;
+      }
+
+      const periodLabel = options.period === 'custom' && options.customStartDate && options.customEndDate
+        ? `${options.customStartDate.toLocaleDateString()} to ${options.customEndDate.toLocaleDateString()}`
+        : options.period;
+      
+      const cardInfo = options.cardIds && options.cardIds.length > 0
+        ? `for ${options.cardIds.length} card(s)`
+        : 'for all cards';
+      
+      await activityLogger.logReportActivity(
+        'generated',
+        'financial_report',
+        {
+          period: periodLabel,
+          format: options.format,
+          recordCount: analytics.summary.totalTransactions,
+          description: `${options.format.toUpperCase()} report content generated ${cardInfo} for period: ${periodLabel}`,
+          cardIds: options.cardIds,
+          includeCharts: options.includeCharts,
+          includeInsights: options.includeInsights,
+          transactionCount: analytics.summary.totalTransactions,
+          totalIncome: analytics.summary.totalIncome,
+          totalExpenses: analytics.summary.totalExpenses,
+          netBalance: analytics.summary.netBalance,
+        },
+        user.$id
+      );
+    } catch (error) {
+      // Don't throw - this is a fire-and-forget operation
+      logger.warn('ANALYTICS', 'Failed to log report content generation activity', error);
+    }
+  }
+
+  /**
+   * Legacy logging method - kept for backward compatibility
+   * @deprecated Use logReportContentGeneration() instead
    */
   private async logReportGenerationActivity(options: ReportOptions, filePath: string): Promise<void> {
     try {
@@ -614,7 +708,103 @@ class AnalyticsService {
       }
     }
 
-    return insights;
+  return insights;
+  }
+
+  /**
+   * Generate CSV content as string (for new storage system)
+   */
+  private generateCSVContent(analytics: AnalyticsData, options: ReportOptions): string {
+    let csvContent = 'Financial Report\n\n';
+    
+    // Summary section
+    csvContent += 'SUMMARY\n';
+    csvContent += `Period,"${analytics.period.label}"\n`;
+    csvContent += `Total Transactions,${analytics.summary.totalTransactions || 0}\n`;
+    csvContent += `Total Income,"GH₵${(analytics.summary.totalIncome || 0).toFixed(2)}"\n`;
+    csvContent += `Total Expenses,"GH₵${(analytics.summary.totalExpenses || 0).toFixed(2)}"\n`;
+    csvContent += `Net Balance,"GH₵${(analytics.summary.netBalance || 0).toFixed(2)}"\n`;
+    csvContent += `Current Balance,"GH₵${(analytics.summary.currentBalance || 0).toFixed(2)}"\n\n`;
+
+    // Transaction types breakdown
+    if (analytics.trends.transactionTypes && analytics.trends.transactionTypes.length > 0) {
+      csvContent += 'TRANSACTION TYPES\n';
+      csvContent += 'Type,Count,Amount,Percentage\n';
+      analytics.trends.transactionTypes.forEach(type => {
+        const safeType = (type.type || 'Unknown').replace(/"/g, '""'); // Escape quotes
+        csvContent += `"${safeType}",${type.count || 0},"GH₵${(type.amount || 0).toFixed(2)}","${(type.percentage || 0).toFixed(1)}%"\n`;
+      });
+      csvContent += '\n';
+    }
+
+    // Category breakdown
+    if (analytics.trends.categoryBreakdown && analytics.trends.categoryBreakdown.length > 0) {
+      csvContent += 'CATEGORIES\n';
+      csvContent += 'Category,Count,Amount,Percentage\n';
+      analytics.trends.categoryBreakdown.forEach(category => {
+        const safeCategory = (category.category || 'Uncategorized').replace(/"/g, '""'); // Escape quotes
+        csvContent += `"${safeCategory}",${category.count || 0},"GH₵${(category.amount || 0).toFixed(2)}","${(category.percentage || 0).toFixed(1)}%"\n`;
+      });
+    }
+
+    // Include insights if requested
+    if (options.includeInsights && analytics.insights && analytics.insights.length > 0) {
+      csvContent += '\nINSIGHTS\n';
+      csvContent += 'Type,Title,Description\n';
+      analytics.insights.forEach(insight => {
+        const safeTitle = (insight.title || '').replace(/"/g, '""');
+        const safeDescription = (insight.description || '').replace(/"/g, '""');
+        csvContent += `"${insight.type || 'info'}","${safeTitle}","${safeDescription}"\n`;
+      });
+    }
+
+    return csvContent;
+  }
+
+  /**
+   * Generate JSON content as string (for new storage system)
+   */
+  private generateJSONContent(analytics: AnalyticsData, options: ReportOptions): string {
+    const report = {
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        reportType: 'Financial Analytics Report',
+        version: '1.0',
+        period: analytics.period,
+        cardId: analytics.cardId || null,
+        cardName: analytics.cardName || 'All Cards',
+        options: {
+          ...options,
+          generatedBy: 'Bank App Analytics Service'
+        }
+      },
+      summary: {
+        ...analytics.summary,
+        // Ensure all numeric values are properly formatted
+        totalIncome: Number((analytics.summary.totalIncome || 0).toFixed(2)),
+        totalExpenses: Number((analytics.summary.totalExpenses || 0).toFixed(2)),
+        netBalance: Number((analytics.summary.netBalance || 0).toFixed(2)),
+        currentBalance: Number((analytics.summary.currentBalance || 0).toFixed(2)),
+        averageTransactionAmount: Number((analytics.summary.averageTransactionAmount || 0).toFixed(2))
+      },
+      trends: {
+        dailyTransactions: analytics.trends.dailyTransactions || [],
+        monthlyTrends: analytics.trends.monthlyTrends || [],
+        categoryBreakdown: (analytics.trends.categoryBreakdown || []).map(cat => ({
+          ...cat,
+          amount: Number((cat.amount || 0).toFixed(2)),
+          percentage: Number((cat.percentage || 0).toFixed(2))
+        })),
+        transactionTypes: (analytics.trends.transactionTypes || []).map(type => ({
+          ...type,
+          amount: Number((type.amount || 0).toFixed(2)),
+          percentage: Number((type.percentage || 0).toFixed(2))
+        }))
+      },
+      insights: analytics.insights || []
+    };
+
+    return JSON.stringify(report, null, 2);
   }
 
   private async generateCSVReport(analytics: AnalyticsData, options: ReportOptions): Promise<string> {
@@ -970,15 +1160,155 @@ class AnalyticsService {
           border-top: 1px solid #e0e0e0;
           padding-top: 20px;
         }
-        .chart-placeholder {
-          background: linear-gradient(45deg, #f0f0f0, #e0e0e0);
-          height: 200px;
+        /* Chart Styles */
+        .chart-container {
+          background: #fafafa;
+          padding: 20px;
+          border-radius: 8px;
+          margin: 20px 0;
+          border: 1px solid #e0e0e0;
+          page-break-inside: avoid;
+        }
+        
+        .pie-chart {
+          margin-top: 15px;
+        }
+        
+        .pie-segment {
+          margin-bottom: 10px;
+        }
+        
+        .legend-item {
           display: flex;
           align-items: center;
-          justify-content: center;
-          border-radius: 8px;
-          margin: 15px 0;
-          border: 2px dashed #ccc;
+          margin-bottom: 5px;
+          font-size: 11px;
+        }
+        
+        .legend-color {
+          width: 12px;
+          height: 12px;
+          border-radius: 2px;
+          margin-right: 8px;
+          display: inline-block;
+        }
+        
+        .legend-text {
+          flex: 1;
+          font-weight: 500;
+        }
+        
+        .legend-amount {
+          font-weight: bold;
+          color: #333;
+        }
+        
+        .bar {
+          height: 6px;
+          border-radius: 3px;
+          margin-top: 3px;
+          min-width: 2px;
+        }
+        
+        .bar-chart {
+          margin-top: 15px;
+        }
+        
+        .chart-row {
+          display: flex;
+          align-items: center;
+          margin-bottom: 15px;
+          font-size: 11px;
+        }
+        
+        .chart-label {
+          width: 80px;
+          font-weight: 500;
+          color: #333;
+        }
+        
+        .chart-bar-container {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          margin-left: 15px;
+        }
+        
+        .chart-bar {
+          height: 20px;
+          border-radius: 4px;
+          min-width: 2px;
+          margin-right: 10px;
+        }
+        
+        .chart-bar.income {
+          background-color: #4caf50;
+        }
+        
+        .chart-bar.expenses {
+          background-color: #f44336;
+        }
+        
+        .chart-bar.net.positive {
+          background-color: #4caf50;
+        }
+        
+        .chart-bar.net.negative {
+          background-color: #f44336;
+        }
+        
+        .chart-value {
+          font-weight: bold;
+          font-size: 10px;
+          min-width: 80px;
+          text-align: right;
+        }
+        
+        .transaction-types {
+          margin-top: 15px;
+        }
+        
+        .type-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 8px 0;
+          border-bottom: 1px solid #eee;
+          font-size: 11px;
+        }
+        
+        .type-row:last-child {
+          border-bottom: none;
+        }
+        
+        .type-info {
+          display: flex;
+          align-items: center;
+        }
+        
+        .type-color {
+          width: 10px;
+          height: 10px;
+          border-radius: 2px;
+          margin-right: 8px;
+        }
+        
+        .type-name {
+          font-weight: 500;
+        }
+        
+        .type-stats {
+          text-align: right;
+        }
+        
+        .type-count {
+          color: #666;
+          margin-right: 10px;
+        }
+        
+        .type-percentage {
+          font-weight: bold;
+          color: #1976d2;
         }
         @media print {
           body { margin: 0; }
@@ -1072,11 +1402,76 @@ class AnalyticsService {
     ${options.includeCharts ? `
     <div class="section">
         <h2>Visual Analytics</h2>
-        <div class="chart-placeholder">
-            <div style="text-align: center; color: #666;">
-                <p><strong>📊 Chart Visualization</strong></p>
-                <p>In the mobile app, this section would contain:</p>
-                <p>• Spending trend charts<br>• Category breakdown pie chart<br>• Monthly comparison graphs</p>
+        
+        <!-- Category Breakdown Pie Chart -->
+        <div class="chart-container">
+            <h3 style="color: #1976d2; font-size: 14px; margin-bottom: 15px;">📊 Spending by Category</h3>
+            <div class="pie-chart">
+                ${analytics.trends.categoryBreakdown.map((category, index) => {
+                  const colors = ['#1976d2', '#f44336', '#ff9800', '#4caf50', '#9c27b0', '#00bcd4', '#795548', '#607d8b'];
+                  const color = colors[index % colors.length];
+                  return `
+                    <div class="pie-segment">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: ${color};"></div>
+                            <span class="legend-text">${category.category} - ${category.percentage.toFixed(1)}%</span>
+                            <span class="legend-amount">GH₵${category.amount.toLocaleString()}</span>
+                        </div>
+                        <div class="bar" style="width: ${Math.min(category.percentage, 100)}%; background-color: ${color};"></div>
+                    </div>
+                  `;
+                }).join('')}
+            </div>
+        </div>
+        
+        <!-- Income vs Expenses Bar Chart -->
+        <div class="chart-container" style="margin-top: 30px;">
+            <h3 style="color: #1976d2; font-size: 14px; margin-bottom: 15px;">📈 Income vs Expenses Comparison</h3>
+            <div class="bar-chart">
+                <div class="chart-row">
+                    <div class="chart-label">Income</div>
+                    <div class="chart-bar-container">
+                        <div class="chart-bar income" style="width: ${analytics.summary.totalIncome > 0 ? (analytics.summary.totalIncome / Math.max(analytics.summary.totalIncome, analytics.summary.totalExpenses)) * 100 : 0}%;"></div>
+                        <span class="chart-value positive">GH₵${analytics.summary.totalIncome.toLocaleString()}</span>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-label">Expenses</div>
+                    <div class="chart-bar-container">
+                        <div class="chart-bar expenses" style="width: ${analytics.summary.totalExpenses > 0 ? (analytics.summary.totalExpenses / Math.max(analytics.summary.totalIncome, analytics.summary.totalExpenses)) * 100 : 0}%;"></div>
+                        <span class="chart-value negative">GH₵${analytics.summary.totalExpenses.toLocaleString()}</span>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-label">Net Balance</div>
+                    <div class="chart-bar-container">
+                        <div class="chart-bar net ${analytics.summary.netBalance >= 0 ? 'positive' : 'negative'}" style="width: ${Math.abs(analytics.summary.netBalance) > 0 ? (Math.abs(analytics.summary.netBalance) / Math.max(analytics.summary.totalIncome, analytics.summary.totalExpenses)) * 100 : 0}%;"></div>
+                        <span class="chart-value ${analytics.summary.netBalance >= 0 ? 'positive' : 'negative'}">GH₵${analytics.summary.netBalance.toLocaleString()}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Transaction Types Breakdown -->
+        <div class="chart-container" style="margin-top: 30px;">
+            <h3 style="color: #1976d2; font-size: 14px; margin-bottom: 15px;">💳 Transaction Types Distribution</h3>
+            <div class="transaction-types">
+                ${analytics.trends.transactionTypes.map((type, index) => {
+                  const colors = ['#1976d2', '#f44336', '#ff9800', '#4caf50', '#9c27b0'];
+                  const color = colors[index % colors.length];
+                  return `
+                    <div class="type-row">
+                        <div class="type-info">
+                            <div class="type-color" style="background-color: ${color};"></div>
+                            <span class="type-name">${type.type}</span>
+                        </div>
+                        <div class="type-stats">
+                            <span class="type-count">${type.count} transactions</span>
+                            <span class="type-percentage">${type.percentage.toFixed(1)}%</span>
+                        </div>
+                    </div>
+                  `;
+                }).join('')}
             </div>
         </div>
     </div>
