@@ -1,0 +1,213 @@
+{
+  "testRun": {
+    "timestamp": "2025-10-04T06:02:35.243Z",
+    "duration": 671,
+    "environment": "Integration Test Suite",
+    "nodeVersion": "v23.11.0",
+    "platform": "linux"
+  },
+  "results": [
+    {
+      "category": "Content Generation",
+      "results": [
+        {
+          "format": "csv",
+          "success": true,
+          "contentLength": 363,
+          "generationTime": 0,
+          "message": "CSV content generated successfully"
+        },
+        {
+          "format": "json",
+          "success": true,
+          "contentLength": 1924,
+          "generationTime": 1,
+          "message": "JSON content generated successfully"
+        },
+        {
+          "format": "html",
+          "success": true,
+          "contentLength": 2881,
+          "generationTime": 10,
+          "message": "HTML content generated successfully"
+        },
+        {
+          "format": "pdf",
+          "success": true,
+          "contentLength": 2881,
+          "generationTime": 0,
+          "message": "PDF content generated successfully"
+        }
+      ]
+    },
+    {
+      "category": "File Saving",
+      "results": [
+        {
+          "format": "csv",
+          "success": true,
+          "fileName": "integration-test-report-2025-10-04T06-02-34-588Z.csv",
+          "filePath": "/home/charad7/Developments/Personal/OpenSource/bank_app/test-integration-output/integration-test-report-2025-10-04T06-02-34-588Z.csv",
+          "fileSize": 377,
+          "saveTime": 0,
+          "message": "CSV file saved successfully"
+        },
+        {
+          "format": "json",
+          "success": true,
+          "fileName": "integration-test-report-2025-10-04T06-02-34-588Z.json",
+          "filePath": "/home/charad7/Developments/Personal/OpenSource/bank_app/test-integration-output/integration-test-report-2025-10-04T06-02-34-588Z.json",
+          "fileSize": 1926,
+          "saveTime": 0,
+          "message": "JSON file saved successfully"
+        },
+        {
+          "format": "html",
+          "success": true,
+          "fileName": "integration-test-report-2025-10-04T06-02-34-588Z.html",
+          "filePath": "/home/charad7/Developments/Personal/OpenSource/bank_app/test-integration-output/integration-test-report-2025-10-04T06-02-34-588Z.html",
+          "fileSize": 2903,
+          "saveTime": 0,
+          "message": "HTML file saved successfully"
+        },
+        {
+          "format": "pdf",
+          "success": true,
+          "fileName": "integration-test-report-2025-10-04T06-02-34-588Z.pdf",
+          "filePath": "/home/charad7/Developments/Personal/OpenSource/bank_app/test-integration-output/integration-test-report-2025-10-04T06-02-34-588Z.pdf",
+          "fileSize": 2903,
+          "saveTime": 0,
+          "message": "PDF file saved successfully"
+        }
+      ]
+    },
+    {
+      "category": "Storage Permissions",
+      "results": [
+        {
+          "scenario": "Permission Granted",
+          "success": true,
+          "granted": true,
+          "status": "granted",
+          "actionTaken": "File can be saved to device storage",
+          "message": "Permission scenario handled correctly"
+        },
+        {
+          "scenario": "Permission Denied",
+          "success": true,
+          "granted": false,
+          "status": "denied",
+          "actionTaken": "User should be prompted again with explanation",
+          "message": "Permission scenario handled correctly"
+        },
+        {
+          "scenario": "Permission Blocked",
+          "success": true,
+          "granted": false,
+          "status": "never_ask_again",
+          "actionTaken": "User should be directed to app settings",
+          "message": "Permission scenario handled correctly"
+        }
+      ]
+    },
+    {
+      "category": "User Workflow",
+      "results": [
+        {
+          "step": 1,
+          "description": "User generates financial report",
+          "success": true,
+          "duration": 50,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 2,
+          "description": "Report content is created successfully",
+          "success": true,
+          "duration": 101,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 3,
+          "description": "User chooses to save report to device",
+          "success": true,
+          "duration": 50,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 4,
+          "description": "App checks storage permissions",
+          "success": true,
+          "duration": 50,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 5,
+          "description": "Permission modal is shown (if needed)",
+          "success": true,
+          "duration": 49,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 6,
+          "description": "User grants storage permission",
+          "success": true,
+          "duration": 51,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 7,
+          "description": "File is saved to device storage",
+          "success": true,
+          "duration": 200,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 8,
+          "description": "User receives success confirmation",
+          "success": true,
+          "duration": 50,
+          "message": "Step completed successfully"
+        },
+        {
+          "step": 9,
+          "description": "File is accessible on device",
+          "success": true,
+          "duration": 51,
+          "message": "Step completed successfully"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalTests": 20,
+    "passedTests": 20,
+    "failedTests": 0,
+    "categories": [
+      {
+        "name": "Content Generation",
+        "total": 4,
+        "passed": 4,
+        "failed": 0
+      },
+      {
+        "name": "File Saving",
+        "total": 4,
+        "passed": 4,
+        "failed": 0
+      },
+      {
+        "name": "Storage Permissions",
+        "total": 3,
+        "passed": 3,
+        "failed": 0
+      },
+      {
+        "name": "User Workflow",
+        "total": 9,
+        "passed": 9,
+        "failed": 0
+      }
+    ]
+  }
+}

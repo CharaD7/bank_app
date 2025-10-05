@@ -1,0 +1,15 @@
+Integration Test Financial Report
+
+SUMMARY
+Period,"Test Integration - Last 30 Days"
+Total Transactions,15
+Total Income,"GH₵3000.00"
+Total Expenses,"GH₵2200.00"
+Net Balance,"GH₵800.00"
+Current Balance,"GH₵5800.00"
+
+TRANSACTION TYPES
+Type,Count,Amount,Percentage
+"Purchase",10,"GH₵1800.00","81.8%"
+"Withdrawal",3,"GH₵300.00","13.6%"
+"Transfer",2,"GH₵100.00","4.5%"

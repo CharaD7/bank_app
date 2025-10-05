@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "generatedAt": "2025-10-04T06:02:34.588Z",
+    "reportType": "Integration Test Financial Report",
+    "version": "1.0",
+    "testMode": true
+  },
+  "summary": {
+    "totalTransactions": 15,
+    "totalIncome": 3000,
+    "totalExpenses": 2200,
+    "netBalance": 800,
+    "currentBalance": 5800,
+    "averageTransactionAmount": 146.67
+  },
+  "period": {
+    "start": "2025-09-04T06:02:34.572Z",
+    "end": "2025-10-04T06:02:34.572Z",
+    "label": "Test Integration - Last 30 Days"
+  },
+  "trends": {
+    "transactionTypes": [
+      {
+        "type": "Purchase",
+        "count": 10,
+        "amount": 1800,
+        "percentage": 81.8
+      },
+      {
+        "type": "Withdrawal",
+        "count": 3,
+        "amount": 300,
+        "percentage": 13.6
+      },
+      {
+        "type": "Transfer",
+        "count": 2,
+        "amount": 100,
+        "percentage": 4.5
+      }
+    ],
+    "categoryBreakdown": [
+      {
+        "category": "Food & Dining",
+        "count": 6,
+        "amount": 450,
+        "percentage": 20.5
+      },
+      {
+        "category": "Shopping",
+        "count": 4,
+        "amount": 320,
+        "percentage": 14.5
+      },
+      {
+        "category": "Transportation",
+        "count": 3,
+        "amount": 180,
+        "percentage": 8.2
+      },
+      {
+        "category": "Bills & Utilities",
+        "count": 2,
+        "amount": 250,
+        "percentage": 11.4
+      }
+    ]
+  },
+  "insights": [
+    {
+      "type": "income_trend",
+      "title": "Positive Savings Trend",
+      "description": "You saved GH₵800.00 this month. Keep up the good work!",
+      "value": 800,
+      "trend": "up",
+      "severity": "success"
+    },
+    {
+      "type": "category_alert",
+      "title": "Food Spending Notice",
+      "description": "Food & Dining represents 20.5% of your spending. Consider budgeting for this category.",
+      "value": 20.5,
+      "severity": "info"
+    }
+  ]
+}
