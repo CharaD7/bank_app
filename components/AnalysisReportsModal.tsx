@@ -1,7 +1,7 @@
 /**
- * Analytics & Reports Modal
+ * Analysis & Reports Modal
  * 
- * Comprehensive modal for viewing analytics and generating reports.
+ * Comprehensive modal for viewing analysis and generating reports.
  * Provides options to generate reports for specific cards or all cards.
  */
 
@@ -24,8 +24,8 @@ import { LineChart, PieChart } from 'react-native-chart-kit';
 import { useTheme } from '@/context/ThemeContext';
 import { useApp } from '@/context/AppContext';
 import { 
-  analyticsService,
-  type AnalyticsData,
+  analysisService,
+  type AnalysisData,
   type ReportOptions,
   type ReportFormat,
   type ReportPeriod 
@@ -37,7 +37,7 @@ import ReportPreviewModal, { ReportPreviewData } from '@/components/ReportPrevie
 
 const { width } = Dimensions.get('window');
 
-interface AnalyticsReportsModalProps {
+interface AnalysisReportsModalProps {
   visible: boolean;
   onClose: () => void;
 }
@@ -55,18 +55,18 @@ const FORMAT_OPTIONS: { value: ReportFormat; label: string; icon: string }[] = [
   { value: 'pdf', label: 'PDF Report', icon: 'document-outline' },
 ];
 
-export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsReportsModalProps) {
+export default function AnalysisReportsModal({ visible, onClose }: AnalysisReportsModalProps) {
   const { colors } = useTheme();
   const { cards, activeCard } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'analytics' | 'reports'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analysis' | 'reports'>('analysis');
   const [selectedPeriod, setSelectedPeriod] = useState<ReportPeriod>('30d');
   const [selectedCards, setSelectedCards] = useState<string[]>([]);
   const [selectedFormat, setSelectedFormat] = useState<ReportFormat>('csv');
   const [includeInsights, setIncludeInsights] = useState(true);
   const [includeCharts, setIncludeCharts] = useState(true);
-  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
-  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   
   // Report Status Modal state
@@ -93,26 +93,26 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
     }
   }, [activeCard]);
 
-  // Load analytics when modal opens or settings change
+  // Load analysis when modal opens or settings change
   useEffect(() => {
-    if (visible && activeTab === 'analytics') {
-      loadAnalytics();
+    if (visible && activeTab === 'analysis') {
+      loadAnalysis();
     }
   }, [visible, activeTab, selectedPeriod, selectedCards]);
 
-  const loadAnalytics = async () => {
-    setIsLoadingAnalytics(true);
+  const loadAnalysis = async () => {
+    setIsLoadingAnalysis(true);
     try {
-      const analyticsData = await analyticsService.generateAnalytics(
+      const analysisData = await analysisService.generateAnalysis(
         selectedCards.length > 0 ? selectedCards : undefined,
         selectedPeriod
       );
-      setAnalytics(analyticsData);
+      setAnalysis(analysisData);
     } catch (error) {
-      logger.error('ANALYTICS_MODAL', 'Failed to load analytics:', error);
-      Alert.alert('Error', 'Failed to load analytics data. Please try again.');
+      logger.error('ANALYSIS_MODAL', 'Failed to load analysis:', error);
+      Alert.alert('Error', 'Failed to load analysis data. Please try again.');
     } finally {
-      setIsLoadingAnalytics(false);
+      setIsLoadingAnalysis(false);
     }
   };
 
@@ -159,7 +159,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
       };
 
       // Use the new generateReportContent method
-      const { content, fileName: generatedFileName } = await analyticsService.generateReportContent(reportOptions);
+      const { content, fileName: generatedFileName } = await analysisService.generateReportContent(reportOptions);
       
       // Prepare preview data
       const reportData: ReportPreviewData = {
@@ -177,7 +177,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
       });
 
     } catch (error) {
-      logger.error('ANALYTICS_MODAL', 'Failed to generate report:', error);
+      logger.error('ANALYSIS_MODAL', 'Failed to generate report:', error);
       
       // Close preview and show error status
       setReportPreviewModal({
@@ -218,7 +218,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         Alert.alert('Error', 'Sharing not available on this device.');
       }
     } catch (error) {
-      logger.error('ANALYTICS_MODAL', 'Failed to share report:', error);
+      logger.error('ANALYSIS_MODAL', 'Failed to share report:', error);
       Alert.alert('Error', 'Failed to share report. Please try again.');
     }
   };
@@ -248,7 +248,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         content: reportData.content,
         fileName: reportData.fileName,
         fileType: reportData.format,
-        location: 'documents',
+        location: 'downloads',
         requestPermissions: true,
         showSuccessMessage: true
       });
@@ -276,7 +276,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         errorMessage: ''
       });
     } catch (error) {
-      logger.error('ANALYTICS_MODAL', 'Failed to save report from preview:', error);
+      logger.error('ANALYSIS_MODAL', 'Failed to save report from preview:', error);
       throw error; // Let the preview modal handle the error display
     }
   };
@@ -312,24 +312,24 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         isLoading: false,
       });
     } catch (error) {
-      logger.error('ANALYTICS_MODAL', 'Failed to share report from preview:', error);
+      logger.error('ANALYSIS_MODAL', 'Failed to share report from preview:', error);
       throw error; // Let the preview modal handle the error display
     }
   };
 
-  const renderAnalyticsTab = () => {
-    if (isLoadingAnalytics) {
+  const renderAnalysisTab = () => {
+    if (isLoadingAnalysis) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.tintPrimary} />
           <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-            Loading analytics...
+            Loading analysis...
           </Text>
         </View>
       );
     }
 
-    if (!analytics) {
+    if (!analysis) {
       return (
         <View style={styles.emptyContainer}>
           <Ionicons name="analytics" size={64} color={colors.textSecondary} />
@@ -337,14 +337,14 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
             No Data Available
           </Text>
           <Text style={[styles.emptyDescription, { color: colors.textSecondary }]}>
-            Select cards and a time period to view analytics
+            Select cards and a time period to view analysis
           </Text>
         </View>
       );
     }
 
     // Prepare chart data
-    const chartData = analytics.trends.dailyTransactions.slice(-7); // Last 7 days
+    const chartData = analysis.trends.dailyTransactions.slice(-7); // Last 7 days
     const lineChartData = {
       labels: chartData.map(d => new Date(d.date).getDate().toString()),
       datasets: [
@@ -356,7 +356,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
       ]
     };
 
-    const pieChartData = analytics.trends.transactionTypes.slice(0, 5).map((type, index) => ({
+    const pieChartData = analysis.trends.transactionTypes.slice(0, 5).map((type, index) => ({
       name: type.type,
       amount: type.amount,
       color: [
@@ -376,7 +376,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         <View style={styles.summaryContainer}>
           <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
             <Text style={[styles.summaryValue, { color: colors.tintPrimary }]}>
-              GH₵{analytics.summary.currentBalance.toFixed(2)}
+              GH₵{analysis.summary.currentBalance.toFixed(2)}
             </Text>
             <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
               Current Balance
@@ -385,7 +385,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
 
           <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
             <Text style={[styles.summaryValue, { color: '#4caf50' }]}>
-              GH₵{analytics.summary.totalIncome.toFixed(2)}
+              GH₵{analysis.summary.totalIncome.toFixed(2)}
             </Text>
             <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
               Total Income
@@ -394,7 +394,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
 
           <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
             <Text style={[styles.summaryValue, { color: '#f44336' }]}>
-              GH₵{analytics.summary.totalExpenses.toFixed(2)}
+              GH₵{analysis.summary.totalExpenses.toFixed(2)}
             </Text>
             <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
               Total Expenses
@@ -403,9 +403,9 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
 
           <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
             <Text style={[styles.summaryValue, { 
-              color: analytics.summary.netBalance >= 0 ? '#4caf50' : '#f44336' 
+              color: analysis.summary.netBalance >= 0 ? '#4caf50' : '#f44336' 
             }]}>
-              GH₵{analytics.summary.netBalance.toFixed(2)}
+              GH₵{analysis.summary.netBalance.toFixed(2)}
             </Text>
             <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
               Net Balance
@@ -461,12 +461,12 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         )}
 
         {/* Insights */}
-        {analytics.insights.length > 0 && (
+        {analysis.insights.length > 0 && (
           <View style={[styles.insightsContainer, { backgroundColor: colors.card }]}>
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
               Financial Insights
             </Text>
-            {analytics.insights.map((insight, index) => (
+            {analysis.insights.map((insight, index) => (
               <View key={index} style={[styles.insightCard, { backgroundColor: colors.background }]}>
                 <View style={styles.insightHeader}>
                   <Ionicons 
@@ -491,7 +491,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
             Transaction Types
           </Text>
-          {analytics.trends.transactionTypes.map((type, index) => (
+          {analysis.trends.transactionTypes.map((type, index) => (
             <View key={index} style={[styles.tableRow, { borderBottomColor: colors.border }]}>
               <Text style={[styles.tableCell, { color: colors.textPrimary }]}>
                 {type.type}
@@ -853,7 +853,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
             <Ionicons name="close" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
-            Analytics & Reports
+            Analysis & Reports
           </Text>
           <View style={styles.closeButton} />
         </View>
@@ -861,19 +861,19 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
         {/* Tab Navigation */}
         <View style={[styles.tabBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <TouchableOpacity
-            style={[styles.tab, activeTab === 'analytics' && { borderBottomColor: colors.tintPrimary }]}
-            onPress={() => setActiveTab('analytics')}
+            style={[styles.tab, activeTab === 'analysis' && { borderBottomColor: colors.tintPrimary }]}
+            onPress={() => setActiveTab('analysis')}
           >
             <Ionicons 
               name="analytics" 
               size={20} 
-              color={activeTab === 'analytics' ? colors.tintPrimary : colors.textSecondary} 
+              color={activeTab === 'analysis' ? colors.tintPrimary : colors.textSecondary} 
             />
             <Text style={[
               styles.tabText,
-              { color: activeTab === 'analytics' ? colors.tintPrimary : colors.textSecondary }
+              { color: activeTab === 'analysis' ? colors.tintPrimary : colors.textSecondary }
             ]}>
-              Analytics
+              Analysis
             </Text>
           </TouchableOpacity>
 
@@ -897,7 +897,7 @@ export default function AnalyticsReportsModal({ visible, onClose }: AnalyticsRep
 
         {/* Content */}
         <View style={styles.content}>
-          {activeTab === 'analytics' ? renderAnalyticsTab() : renderReportsTab()}
+          {activeTab === 'analysis' ? renderAnalysisTab() : renderReportsTab()}
         </View>
       </SafeAreaView>
       
@@ -1002,24 +1002,33 @@ const styles = StyleSheet.create({
   summaryContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
     marginBottom: 20,
+    gap: 8,
+    justifyContent: 'space-between',
   },
   summaryCard: {
     flex: 1,
-    minWidth: '45%',
-    padding: 16,
+    minWidth: 140,
+    maxWidth: 180,
+    padding: 12,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 80,
   },
   summaryValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 6,
   },
   summaryLabel: {
-    fontSize: 12,
-    marginTop: 4,
+    fontSize: 11,
     textAlign: 'center',
+    lineHeight: 14,
+    flexWrap: 'wrap',
+    flexShrink: 1,
   },
   chartContainer: {
     padding: 16,

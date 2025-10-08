@@ -36,8 +36,8 @@ export const appwriteConfig = {
   // Removed accountUpdatesCollectionId - using users collection for activity logging instead
   notificationsCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_NOTIFICATIONS_COLLECTION_ID', 'APPWRITE_NOTIFICATIONS_COLLECTION_ID']),
   
-  // Analytics collection (optional)
-  analyticsCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_ANALYTICS_COLLECTION_ID', 'APPWRITE_ANALYTICS_COLLECTION_ID'], 'analytics_events'),
+  // Analysis collection (optional)
+  analysisCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_ANALYSIS_COLLECTION_ID', 'APPWRITE_ANALYSIS_COLLECTION_ID'], 'analysis_events'),
   
   // Payments collection (required for withdrawals and transactions)
   paymentsCollectionId: getEnvVar(['EXPO_PUBLIC_APPWRITE_PAYMENTS_COLLECTION_ID', 'APPWRITE_PAYMENTS_COLLECTION_ID'], 'payments'),
@@ -170,8 +170,8 @@ export const collections = {
     id: appwriteConfig.notificationsCollectionId,
     databaseId: appwriteConfig.databaseId,
   },
-  analytics: {
-    id: appwriteConfig.analyticsCollectionId,
+  analysis: {
+    id: appwriteConfig.analysisCollectionId,
     databaseId: appwriteConfig.databaseId,
   },
   payments: {

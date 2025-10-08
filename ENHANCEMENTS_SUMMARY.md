@@ -72,12 +72,12 @@ const { uri } = await Print.printToFileAsync({
 - Complete metadata inclusion
 - Properly formatted numerical values
 - Version tracking and generation timestamps
-- Comprehensive analytics data structure
+- Comprehensive analysis data structure
 
 #### Files Created/Modified:
-- `lib/appwrite/analyticsService.ts` - Enhanced report generation methods
+- `lib/appwrite/analysisService.ts` - Enhanced report generation methods
 - `components/ReportStatusModal.tsx` - New custom success/failure modal
-- `components/AnalyticsReportsModal.tsx` - Updated to use new modal system
+- `components/AnalysisReportsModal.tsx` - Updated to use new modal system
 - `scripts/test-reports.js` - Comprehensive testing script
 - `scripts/demo-pdf-generation.js` - PDF generation demonstration
 

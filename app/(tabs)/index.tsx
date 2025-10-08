@@ -27,8 +27,8 @@ import { QuickAction } from "@/components/QuickAction";
 import { TransactionItem } from "@/components/TransactionItem";
 import { ProfilePicture } from "@/components/ProfilePicture";
 import { ClearDataModal } from "@/components/ClearDataModal";
-import { TransactionAnalytics } from "@/components/TransactionAnalytics";
-import AnalyticsReportsModal from "@/components/AnalyticsReportsModal";
+import { TransactionAnalysis } from "@/components/TransactionAnalysis";
+import AnalysisReportsModal from "@/components/AnalysisReportsModal";
 import { useApp } from "@/context/AppContext";
 import { useTheme } from "@/context/ThemeContext";
 import { createMutedColor } from "@/theme/color-utils";
@@ -40,7 +40,7 @@ export default function HomeScreen() {
   const [dateFilter, setDateFilter] = React.useState("all");
   const [showClearTransactions, setShowClearTransactions] = React.useState(false);
   const [isClearingTransactions, setIsClearingTransactions] = React.useState(false);
-  const [showAnalyticsReports, setShowAnalyticsReports] = React.useState(false);
+  const [showAnalysisReports, setShowAnalysisReports] = React.useState(false);
 
   const { user } = useAuthStore();
   const unreadCount = React.useMemo(() => {
@@ -206,12 +206,12 @@ export default function HomeScreen() {
             <QuickAction
               icon={<MoreHorizontal color={colors.tintPrimary} size={24} />}
               label="More"
-              onPress={() => setShowAnalyticsReports(true)}
+              onPress={() => setShowAnalysisReports(true)}
             />
           </View>
 
-          {/* Transaction Analytics */}
-          <TransactionAnalytics />
+          {/* Transaction Analysis */}
+          <TransactionAnalysis />
 
           <View style={[styles.transactionsSection, { backgroundColor: colors.card }]}>
             {/* Sticky Header */}
@@ -291,9 +291,9 @@ export default function HomeScreen() {
           isLoading={isClearingTransactions}
         />
 
-        <AnalyticsReportsModal
-          visible={showAnalyticsReports}
-          onClose={() => setShowAnalyticsReports(false)}
+        <AnalysisReportsModal
+          visible={showAnalysisReports}
+          onClose={() => setShowAnalysisReports(false)}
         />
       </KeyboardAvoidingView>
       </Animated.View>

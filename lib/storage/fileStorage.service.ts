@@ -306,9 +306,13 @@ export class FileStorageService {
     try {
       switch (location) {
         case 'downloads':
+          // Save to app documents since we'll use sharing for Downloads access
+          // This approach works better with Expo managed workflow
+          logger.info('FILE_STORAGE', 'Saving to app documents for Downloads location (will use share dialog)');
+          return `${FileSystem.documentDirectory}${fileName}`;
+          
         case 'documents':
-          // For Expo managed workflow, save to app documents and use sharing
-          // Users can then save to their preferred location via the share dialog
+          // Save to app documents directory
           return `${FileSystem.documentDirectory}${fileName}`;
 
         case 'cache':
@@ -319,6 +323,7 @@ export class FileStorageService {
 
         default:
           // Default to app documents directory
+          logger.info('FILE_STORAGE', 'Using default app documents directory');
           return `${FileSystem.documentDirectory}${fileName}`;
       }
     } catch (error) {

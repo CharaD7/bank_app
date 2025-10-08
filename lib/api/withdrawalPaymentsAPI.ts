@@ -701,61 +701,51 @@ export class WithdrawalPaymentsAPI {
 
   /**
    * Simulate network processing (in real app, this would call actual network APIs)
+   * Auto-approval: Always returns success for testing/demo purposes
    */
   private async simulateNetworkProcessing(network: GhanaianMobileNetwork, data: any): Promise<{ success: boolean; transactionId?: string; error?: string }> {
     // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500));
 
-    // Simulate 95% success rate
-    if (Math.random() < 0.95) {
-      return {
-        success: true,
-        transactionId: `${network.toUpperCase()}-${Date.now()}`
-      };
-    } else {
-      return {
-        success: false,
-        error: 'Network temporarily unavailable. Please try again.'
-      };
-    }
+    // Auto-approval: Always succeed for demo purposes
+    logger.info('WITHDRAWAL_PAYMENTS_API', 'Auto-approving network processing', { network, amount: data.amount });
+    
+    return {
+      success: true,
+      transactionId: `${network.toUpperCase()}-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`
+    };
   }
 
   /**
    * Simulate bank processing
+   * Auto-approval: Always returns success for testing/demo purposes
    */
   private async simulateBankProcessing(data: any): Promise<{ success: boolean; transactionId?: string; error?: string }> {
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 700));
 
-    if (Math.random() < 0.92) {
-      return {
-        success: true,
-        transactionId: `BANK-${Date.now()}`
-      };
-    } else {
-      return {
-        success: false,
-        error: 'Invalid account details or bank temporarily unavailable.'
-      };
-    }
+    // Auto-approval: Always succeed for demo purposes
+    logger.info('WITHDRAWAL_PAYMENTS_API', 'Auto-approving bank processing', { amount: data.amount, accountNumber: data.accountNumber });
+    
+    return {
+      success: true,
+      transactionId: `BANK-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`
+    };
   }
 
   /**
    * Simulate cash pickup processing
+   * Auto-approval: Always returns success for testing/demo purposes
    */
   private async simulateCashPickupProcessing(data: any): Promise<{ success: boolean; transactionId?: string; error?: string }> {
-    await new Promise(resolve => setTimeout(resolve, 800));
+    await new Promise(resolve => setTimeout(resolve, 400));
 
-    if (Math.random() < 0.98) {
-      return {
-        success: true,
-        transactionId: `CASH-${Date.now()}`
-      };
-    } else {
-      return {
-        success: false,
-        error: 'Cash pickup service temporarily unavailable.'
-      };
-    }
+    // Auto-approval: Always succeed for demo purposes
+    logger.info('WITHDRAWAL_PAYMENTS_API', 'Auto-approving cash pickup processing', { amount: data.amount, receiverName: data.receiverName });
+    
+    return {
+      success: true,
+      transactionId: `CASH-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`
+    };
   }
 
   /**

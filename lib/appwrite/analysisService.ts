@@ -1,7 +1,7 @@
 /**
- * Analytics Service
+ * Analysis Service
  * 
- * Provides comprehensive analytics and reporting functionality for banking data.
+ * Provides comprehensive analysis and reporting functionality for banking data.
  * Generates insights, trends, and downloadable reports for cards and transactions.
  */
 
@@ -13,7 +13,7 @@ import { activityLogger } from '@/lib/activityLogger';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 // Note: PDFKit would be imported in Node.js environment: const PDFDocument = require('pdfkit');
-export interface AnalyticsData {
+export interface AnalysisData {
   cardId?: string;
   cardName?: string;
   period: {
@@ -35,7 +35,7 @@ export interface AnalyticsData {
     categoryBreakdown: CategoryBreakdown[];
     transactionTypes: TransactionTypeBreakdown[];
   };
-  insights: AnalyticsInsight[];
+  insights: AnalysisInsight[];
 }
 
 export interface DailyTransaction {
@@ -70,7 +70,7 @@ export interface TransactionTypeBreakdown {
   percentage: number;
 }
 
-export interface AnalyticsInsight {
+export interface AnalysisInsight {
   type: 'spending_pattern' | 'income_trend' | 'category_alert' | 'balance_warning' | 'recommendation';
   title: string;
   description: string;
@@ -92,7 +92,7 @@ export interface ReportOptions {
   includeInsights: boolean;
 }
 
-class AnalyticsService {
+class AnalysisService {
   private readonly transactionsCollectionId: string;
   private readonly cardsCollectionId: string;
 
@@ -102,11 +102,11 @@ class AnalyticsService {
   }
 
   /**
-   * Generate analytics data for specified cards and period
+   * Generate analysis data for specified cards and period
    */
-  async generateAnalytics(cardIds?: string[], period: ReportPeriod = '30d', customStart?: Date, customEnd?: Date): Promise<AnalyticsData> {
+  async generateAnalysis(cardIds?: string[], period: ReportPeriod = '30d', customStart?: Date, customEnd?: Date): Promise<AnalysisData> {
     try {
-      logger.info('ANALYTICS', 'Generating analytics', { cardIds, period });
+      logger.info('ANALYSIS', 'Generating analysis', { cardIds, period });
 
       const { start, end, label } = this.getPeriodDates(period, customStart, customEnd);
       
@@ -121,7 +121,7 @@ class AnalyticsService {
       const trends = this.calculateTrends(transactions, start, end);
       const insights = this.generateInsights(transactions, summary, trends);
 
-      const analytics: AnalyticsData = {
+      const analysis: AnalysisData = {
         cardId: cardIds?.length === 1 ? cardIds[0] : undefined,
         cardName: cardIds?.length === 1 ? cards.find(c => c.id === cardIds[0])?.cardName : undefined,
         period: { start, end, label },
@@ -130,16 +130,16 @@ class AnalyticsService {
         insights
       };
 
-      logger.info('ANALYTICS', 'Analytics generated successfully', {
+      logger.info('ANALYSIS', 'Analysis generated successfully', {
         transactionCount: transactions.length,
         cardCount: cards.length,
         period: label
       });
 
-      return analytics;
+      return analysis;
 
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to generate analytics:', error);
+      logger.error('ANALYSIS', 'Failed to generate analysis:', error);
       throw error;
     }
   }
@@ -149,10 +149,10 @@ class AnalyticsService {
    */
   async generateReportContent(options: ReportOptions): Promise<{ content: string; fileName: string }> {
     try {
-      logger.info('ANALYTICS', 'Generating report content', options);
+      logger.info('ANALYSIS', 'Generating report content', options);
 
-      // Generate analytics data
-      const analytics = await this.generateAnalytics(
+      // Generate analysis data
+      const analysis = await this.generateAnalysis(
         options.cardIds,
         options.period,
         options.customStartDate,
@@ -166,20 +166,20 @@ class AnalyticsService {
 
       switch (options.format) {
         case 'csv':
-          content = this.generateCSVContent(analytics, options);
+          content = this.generateCSVContent(analysis, options);
           fileName = `financial-report-${timestamp}.csv`;
           break;
         case 'json':
-          content = this.generateJSONContent(analytics, options);
+          content = this.generateJSONContent(analysis, options);
           fileName = `financial-report-${timestamp}.json`;
           break;
         case 'html':
-          content = this.generateHTMLReport(analytics, options);
+          content = this.generateHTMLReport(analysis, options);
           fileName = `financial-report-${timestamp}.html`;
           break;
         case 'pdf':
           // For PDF, return HTML content that can be converted by the storage service
-          content = this.generateHTMLReport(analytics, options);
+          content = this.generateHTMLReport(analysis, options);
           fileName = `financial-report-${timestamp}.pdf`;
           break;
         default:
@@ -187,11 +187,11 @@ class AnalyticsService {
       }
 
       // Log report generation activity (fire-and-forget)
-      this.logReportContentGeneration(options, analytics).catch(error => {
-        logger.warn('ANALYTICS', 'Failed to log report generation activity', error);
+      this.logReportContentGeneration(options, analysis).catch(error => {
+        logger.warn('ANALYSIS', 'Failed to log report generation activity', error);
       });
 
-      logger.info('ANALYTICS', 'Report content generated successfully', { 
+      logger.info('ANALYSIS', 'Report content generated successfully', {
         fileName, 
         format: options.format,
         contentLength: content.length 
@@ -200,7 +200,7 @@ class AnalyticsService {
       return { content, fileName };
 
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to generate report content:', error);
+      logger.error('ANALYSIS', 'Failed to generate report content:', error);
       throw error;
     }
   }
@@ -211,7 +211,7 @@ class AnalyticsService {
    */
   async generateReport(options: ReportOptions): Promise<string> {
     try {
-      logger.warn('ANALYTICS', 'Using deprecated generateReport method. Consider migrating to generateReportContent() with storage services.');
+      logger.warn('ANALYSIS', 'Using deprecated generateReport method. Consider migrating to generateReportContent() with storage services.');
       
       const { content, fileName } = await this.generateReportContent(options);
       
@@ -228,11 +228,11 @@ class AnalyticsService {
       const filePath = `${documentDir}${fileName}`;
       await FileSystem.writeAsStringAsync(filePath, content);
       
-      logger.info('ANALYTICS', 'Legacy report generated successfully', { filePath, format: options.format });
+      logger.info('ANALYSIS', 'Legacy report generated successfully', { filePath, format: options.format });
       return filePath;
 
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to generate report:', error);
+      logger.error('ANALYSIS', 'Failed to generate report:', error);
       throw error;
     }
   }
@@ -247,12 +247,12 @@ class AnalyticsService {
           mimeType: this.getMimeType(filePath),
           dialogTitle: 'Share Financial Report'
         });
-        logger.info('ANALYTICS', 'Report shared successfully');
+        logger.info('ANALYSIS', 'Report shared successfully');
       } else {
         throw new Error('Sharing is not available on this device');
       }
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to share report:', error);
+      logger.error('ANALYSIS', 'Failed to share report:', error);
       throw error;
     }
   }
@@ -260,13 +260,13 @@ class AnalyticsService {
   /**
    * Log report content generation activity (for new storage system)
    */
-  private async logReportContentGeneration(options: ReportOptions, analytics: AnalyticsData): Promise<void> {
+  private async logReportContentGeneration(options: ReportOptions, analysis: AnalysisData): Promise<void> {
     try {
       // Get current user from auth context
       const { authService } = await import('./auth');
       const user = await authService.getCurrentUser();
       if (!user) {
-        logger.warn('ANALYTICS', 'Cannot log report activity - user not authenticated');
+        logger.warn('ANALYSIS', 'Cannot log report activity - user not authenticated');
         return;
       }
 
@@ -284,21 +284,21 @@ class AnalyticsService {
         {
           period: periodLabel,
           format: options.format,
-          recordCount: analytics.summary.totalTransactions,
+          recordCount: analysis.summary.totalTransactions,
           description: `${options.format.toUpperCase()} report content generated ${cardInfo} for period: ${periodLabel}`,
           cardIds: options.cardIds,
           includeCharts: options.includeCharts,
           includeInsights: options.includeInsights,
-          transactionCount: analytics.summary.totalTransactions,
-          totalIncome: analytics.summary.totalIncome,
-          totalExpenses: analytics.summary.totalExpenses,
-          netBalance: analytics.summary.netBalance,
+          transactionCount: analysis.summary.totalTransactions,
+          totalIncome: analysis.summary.totalIncome,
+          totalExpenses: analysis.summary.totalExpenses,
+          netBalance: analysis.summary.netBalance,
         },
         user.$id
       );
     } catch (error) {
       // Don't throw - this is a fire-and-forget operation
-      logger.warn('ANALYTICS', 'Failed to log report content generation activity', error);
+      logger.warn('ANALYSIS', 'Failed to log report content generation activity', error);
     }
   }
 
@@ -312,7 +312,7 @@ class AnalyticsService {
       const { authService } = await import('./auth');
       const user = await authService.getCurrentUser();
       if (!user) {
-        logger.warn('ANALYTICS', 'Cannot log report activity - user not authenticated');
+        logger.warn('ANALYSIS', 'Cannot log report activity - user not authenticated');
         return;
       }
 
@@ -341,7 +341,7 @@ class AnalyticsService {
       );
     } catch (error) {
       // Don't throw - this is a fire-and-forget operation
-      logger.warn('ANALYTICS', 'Failed to log report generation activity', error);
+      logger.warn('ANALYSIS', 'Failed to log report generation activity', error);
     }
   }
 
@@ -366,23 +366,35 @@ class AnalyticsService {
       queries
     );
 
-    let transactions = response.documents.map(doc => ({
-      id: doc.$id,
-      userId: doc.userId,
-      cardId: doc.cardId,
-      amount: doc.amount,
-      type: doc.type,
-      category: doc.category,
-      description: doc.description,
-      status: doc.status,
-      date: doc.date || doc.$createdAt,
-      fee: doc.fee || 0
-    }));
+    let transactions = response.documents
+      .map(doc => ({
+        id: doc.$id,
+        userId: doc.userId,
+        cardId: doc.cardId,
+        amount: this.validateAmount(doc.amount),
+        type: doc.type,
+        category: doc.category,
+        description: doc.description,
+        status: doc.status,
+        date: doc.date || doc.$createdAt,
+        fee: this.validateAmount(doc.fee) || 0
+      }))
+      .filter(t => {
+        // Filter out transactions with invalid amounts
+        return t.amount !== null && !isNaN(t.amount) && isFinite(t.amount);
+      });
 
     // Filter by cardIds if specified (since Query.in might not be available)
     if (cardIds && cardIds.length > 0) {
       transactions = transactions.filter(t => cardIds.includes(t.cardId));
     }
+
+    logger.info('ANALYSIS', 'Transactions fetched and validated', {
+      totalFetched: response.documents.length,
+      validTransactions: transactions.length,
+      cardFilter: cardIds?.length || 'all',
+      dateRange: { start: startDate?.toISOString(), end: endDate?.toISOString() }
+    });
 
     return transactions;
   }
@@ -413,7 +425,7 @@ class AnalyticsService {
       // Filter by cardIds and isActive status client-side
       return allCards.filter(card => cardIds.includes(card.id) && card.isActive);
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to fetch cards', error);
+      logger.error('ANALYSIS', 'Failed to fetch cards', error);
       return [];
     }
   }
@@ -443,7 +455,7 @@ class AnalyticsService {
       // Filter by isActive status client-side
       return allCards.filter(card => card.isActive);
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to fetch all cards', error);
+      logger.error('ANALYSIS', 'Failed to fetch all cards', error);
       return [];
     }
   }
@@ -482,10 +494,36 @@ class AnalyticsService {
     return { start, end, label };
   }
 
+  /**
+   * Validate and sanitize amount values from database
+   */
+  private validateAmount(amount: any): number | null {
+    if (amount === null || amount === undefined) {
+      return null;
+    }
+    
+    // Convert to number if it's a string
+    const numAmount = typeof amount === 'string' ? parseFloat(amount) : Number(amount);
+    
+    // Check if it's a valid number
+    if (isNaN(numAmount) || !isFinite(numAmount)) {
+      logger.warn('ANALYSIS', 'Invalid amount detected', { originalValue: amount, convertedValue: numAmount });
+      return null;
+    }
+    
+    // Check for unreasonably large amounts (potential data corruption)
+    if (Math.abs(numAmount) > 1000000000) { // 1 billion threshold
+      logger.warn('ANALYSIS', 'Unusually large amount detected', { amount: numAmount });
+      return null;
+    }
+    
+    return numAmount;
+  }
+
   private calculateSummary(transactions: Transaction[], cards: Card[]) {
     const totalTransactions = transactions.length;
     const totalIncome = transactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
-    const totalExpenses = Math.abs(transactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0));
+    const totalExpenses = transactions.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0);
     const netBalance = totalIncome - totalExpenses;
     const averageTransactionAmount = totalTransactions > 0 ? (totalIncome + totalExpenses) / totalTransactions : 0;
     const currentBalance = cards.reduce((sum, card) => sum + (card.balance || 0), 0);
@@ -595,10 +633,13 @@ class AnalyticsService {
 
   private calculateCategoryBreakdown(transactions: Transaction[]): CategoryBreakdown[] {
     const groups = new Map<string, { count: number; amount: number }>();
-    const totalAmount = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    
+    // Only include expense transactions for category breakdown
+    const expenseTransactions = transactions.filter(t => t.amount < 0);
+    const totalExpenseAmount = expenseTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
-    transactions.forEach(transaction => {
-      const category = transaction.category || 'Uncategorized';
+    expenseTransactions.forEach(transaction => {
+      const category = transaction.category || transaction.type || 'Uncategorized';
       
       if (!groups.has(category)) {
         groups.set(category, { count: 0, amount: 0 });
@@ -609,44 +650,73 @@ class AnalyticsService {
       group.amount += Math.abs(transaction.amount);
     });
 
-    return Array.from(groups.entries())
+    const categoryBreakdown = Array.from(groups.entries())
       .map(([category, data]) => ({
         category,
         count: data.count,
         amount: data.amount,
-        percentage: totalAmount > 0 ? (data.amount / totalAmount) * 100 : 0
+        percentage: totalExpenseAmount > 0 ? (data.amount / totalExpenseAmount) * 100 : 0
       }))
       .sort((a, b) => b.amount - a.amount);
+
+    logger.info('ANALYSIS', 'Category breakdown calculated', {
+      totalExpenseTransactions: expenseTransactions.length,
+      totalExpenseAmount,
+      categories: categoryBreakdown.length,
+      topCategory: categoryBreakdown[0]?.category
+    });
+
+    return categoryBreakdown;
   }
 
   private calculateTransactionTypeBreakdown(transactions: Transaction[]): TransactionTypeBreakdown[] {
-    const groups = new Map<string, { count: number; amount: number }>();
-    const totalAmount = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const groups = new Map<string, { count: number; income: number; expenses: number; totalAmount: number }>();
+    const totalTransactionAmount = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
     transactions.forEach(transaction => {
-      const type = transaction.type || 'Other';
+      const type = transaction.type || (transaction.amount > 0 ? 'Income' : 'Expense');
       
       if (!groups.has(type)) {
-        groups.set(type, { count: 0, amount: 0 });
+        groups.set(type, { count: 0, income: 0, expenses: 0, totalAmount: 0 });
       }
 
       const group = groups.get(type)!;
       group.count++;
-      group.amount += Math.abs(transaction.amount);
+      group.totalAmount += Math.abs(transaction.amount);
+      
+      if (transaction.amount > 0) {
+        group.income += transaction.amount;
+      } else {
+        group.expenses += Math.abs(transaction.amount);
+      }
     });
 
-    return Array.from(groups.entries())
+    const typeBreakdown = Array.from(groups.entries())
       .map(([type, data]) => ({
         type,
         count: data.count,
-        amount: data.amount,
-        percentage: totalAmount > 0 ? (data.amount / totalAmount) * 100 : 0
+        amount: data.totalAmount,
+        percentage: totalTransactionAmount > 0 ? (data.totalAmount / totalTransactionAmount) * 100 : 0,
+        // Additional breakdown info (not in interface but helpful for debugging)
+        _debug: {
+          income: data.income,
+          expenses: data.expenses
+        }
       }))
       .sort((a, b) => b.amount - a.amount);
+
+    logger.info('ANALYSIS', 'Transaction type breakdown calculated', {
+      totalTransactions: transactions.length,
+      totalAmount: totalTransactionAmount,
+      types: typeBreakdown.length,
+      breakdown: typeBreakdown.map(t => ({ type: t.type, count: t.count, amount: t.amount.toFixed(2) }))
+    });
+
+    return typeBreakdown;
   }
 
-  private generateInsights(transactions: Transaction[], summary: any, trends: any): AnalyticsInsight[] {
-    const insights: AnalyticsInsight[] = [];
+  private generateInsights(transactions: Transaction[], summary: any, trends: any): AnalysisInsight[] {
+    const insights: AnalysisInsight[] = [];
 
     // Spending pattern insight
     if (summary.totalExpenses > summary.totalIncome) {
@@ -714,7 +784,7 @@ class AnalyticsService {
   /**
    * Generate CSV content as string (for new storage system)
    */
-  private generateCSVContent(analytics: AnalyticsData, options: ReportOptions): string {
+  private generateCSVContent(analytics: AnalysisData, options: ReportOptions): string {
     let csvContent = 'Financial Report\n\n';
     
     // Summary section
@@ -764,18 +834,18 @@ class AnalyticsService {
   /**
    * Generate JSON content as string (for new storage system)
    */
-  private generateJSONContent(analytics: AnalyticsData, options: ReportOptions): string {
+  private generateJSONContent(analytics: AnalysisData, options: ReportOptions): string {
     const report = {
       metadata: {
         generatedAt: new Date().toISOString(),
-        reportType: 'Financial Analytics Report',
+        reportType: 'Financial Analysis Report',
         version: '1.0',
         period: analytics.period,
         cardId: analytics.cardId || null,
         cardName: analytics.cardName || 'All Cards',
         options: {
           ...options,
-          generatedBy: 'Bank App Analytics Service'
+          generatedBy: 'Bank App Analysis Service'
         }
       },
       summary: {
@@ -807,7 +877,7 @@ class AnalyticsService {
     return JSON.stringify(report, null, 2);
   }
 
-  private async generateCSVReport(analytics: AnalyticsData, options: ReportOptions): Promise<string> {
+  private async generateCSVReport(analytics: AnalysisData, options: ReportOptions): Promise<string> {
     try {
       // Validate analytics data
       if (!analytics || !analytics.summary || !analytics.trends) {
@@ -878,15 +948,15 @@ class AnalyticsService {
       }
 
       await FileSystem.writeAsStringAsync(filePath, csvContent);
-      logger.info('ANALYTICS', `CSV report generated successfully: ${fileName}`);
+      logger.info('ANALYSIS', `CSV report generated successfully: ${fileName}`);
       return filePath;
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to generate CSV report:', error);
+      logger.error('ANALYSIS', 'Failed to generate CSV report:', error);
       throw new Error(`Failed to generate CSV report: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  private async generateJSONReport(analytics: AnalyticsData, options: ReportOptions): Promise<string> {
+  private async generateJSONReport(analytics: AnalysisData, options: ReportOptions): Promise<string> {
     try {
       // Validate analytics data
       if (!analytics || !analytics.summary || !analytics.trends) {
@@ -916,14 +986,14 @@ class AnalyticsService {
       const report = {
         metadata: {
           generatedAt: new Date().toISOString(),
-          reportType: 'Financial Analytics Report',
+          reportType: 'Financial Analysis Report',
           version: '1.0',
           period: analytics.period,
           cardId: analytics.cardId || null,
           cardName: analytics.cardName || 'All Cards',
           options: {
             ...options,
-            generatedBy: 'Bank App Analytics Service'
+            generatedBy: 'Bank App Analysis Service'
           }
         },
         summary: {
@@ -954,15 +1024,15 @@ class AnalyticsService {
 
       const jsonContent = JSON.stringify(report, null, 2);
       await FileSystem.writeAsStringAsync(filePath, jsonContent);
-      logger.info('ANALYTICS', `JSON report generated successfully: ${fileName}`);
+      logger.info('ANALYSIS', `JSON report generated successfully: ${fileName}`);
       return filePath;
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to generate JSON report:', error);
+      logger.error('ANALYSIS', 'Failed to generate JSON report:', error);
       throw new Error(`Failed to generate JSON report: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  private async generatePDFReport(analytics: AnalyticsData, options: ReportOptions): Promise<string> {
+  private async generatePDFReport(analytics: AnalysisData, options: ReportOptions): Promise<string> {
     try {
       // Validate analytics data
       if (!analytics || !analytics.summary || !analytics.trends) {
@@ -1026,15 +1096,15 @@ class AnalyticsService {
         await this.generateDirectPDF(analytics, options, filePath);
       }
 
-      logger.info('ANALYTICS', `PDF report generated successfully: ${fileName}`);
+      logger.info('ANALYSIS', `PDF report generated successfully: ${fileName}`);
       return filePath;
     } catch (error) {
-      logger.error('ANALYTICS', 'Failed to generate PDF report:', error);
+      logger.error('ANALYSIS', 'Failed to generate PDF report:', error);
       throw new Error(`Failed to generate PDF report: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  private generateHTMLReport(analytics: AnalyticsData, options: ReportOptions): string {
+  private generateHTMLReport(analytics: AnalysisData, options: ReportOptions): string {
     return `
 <!DOCTYPE html>
 <html>
@@ -1219,26 +1289,32 @@ class AnalyticsService {
           align-items: center;
           margin-bottom: 15px;
           font-size: 11px;
+          width: 100%;
+          min-height: 24px;
         }
         
         .chart-label {
-          width: 80px;
+          width: 120px;
           font-weight: 500;
           color: #333;
+          flex-shrink: 0;
         }
         
         .chart-bar-container {
           flex: 1;
           display: flex;
           align-items: center;
-          margin-left: 15px;
+          padding: 0 10px;
+          min-width: 180px;
+          max-width: 300px;
+          overflow: hidden;
         }
         
         .chart-bar {
           height: 20px;
           border-radius: 4px;
-          min-width: 2px;
-          margin-right: 10px;
+          min-width: 8px;
+          margin-right: 15px;
         }
         
         .chart-bar.income {
@@ -1260,8 +1336,14 @@ class AnalyticsService {
         .chart-value {
           font-weight: bold;
           font-size: 10px;
-          min-width: 80px;
+          min-width: 100px;
+          max-width: 140px;
           text-align: right;
+          flex-shrink: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          padding-left: 8px;
         }
         
         .transaction-types {
@@ -1318,7 +1400,7 @@ class AnalyticsService {
 </head>
 <body>
     <div class="header">
-        <h1>Financial Analytics Report</h1>
+        <h1>Financial Analysis Report</h1>
         <p><strong>Period:</strong> ${analytics.period.label}</p>
         ${analytics.cardName ? `<p><strong>Card:</strong> ${analytics.cardName}</p>` : '<p><strong>All Cards</strong></p>'}
         <p><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { 
@@ -1514,7 +1596,7 @@ class AnalyticsService {
     ` : ''}
 
     <div class="footer">
-        <p><strong>🏦 Bank App Analytics Report</strong></p>
+        <p><strong>🏦 Bank App Analysis Report</strong></p>
         <p>Generated on ${new Date().toLocaleDateString()}, ${new Date().toLocaleTimeString()} • Confidential Financial Document</p>
         <p>This report contains sensitive financial information. Handle with care and maintain confidentiality.</p>
         <p style="margin-top: 10px; font-style: italic;">
@@ -1541,7 +1623,7 @@ class AnalyticsService {
    * Direct PDF generation using PDFKit (for Node.js environments)
    * This method creates PDF files programmatically without HTML conversion
    */
-  private async generateDirectPDF(analytics: AnalyticsData, options: ReportOptions, outputPath: string): Promise<void> {
+  private async generateDirectPDF(analytics: AnalysisData, options: ReportOptions, outputPath: string): Promise<void> {
     // Note: This method requires PDFKit to be available
     // In a React Native environment, this would not be called
     // The implementation is provided for completeness and testing
@@ -1557,7 +1639,7 @@ class AnalyticsService {
           size: 'A4',
           margins: { top: 50, bottom: 50, left: 50, right: 50 },
           info: {
-            Title: 'Financial Analytics Report',
+            Title: 'Financial Analysis Report',
             Author: 'Bank App Analytics',
             Subject: `Financial Report - ${analytics.period.label}`,
             Keywords: 'financial report analytics banking'
@@ -1583,7 +1665,7 @@ class AnalyticsService {
         doc.fillColor('white')
            .fontSize(24)
            .font('Helvetica-Bold')
-           .text('Financial Analytics Report', 50, 25, { width: 495, align: 'center' });
+           .text('Financial Analysis Report', 50, 25, { width: 495, align: 'center' });
 
         doc.fontSize(12)
            .text(`${analytics.period.label} | ${analytics.cardName || 'All Cards'}`, 50, 50, { 
@@ -1681,7 +1763,7 @@ class AnalyticsService {
         // Footer
         doc.fillColor('#666')
            .fontSize(8)
-           .text('Bank App Analytics Report • Generated using direct PDF generation', 50, 750, { 
+           .text('Bank App Analysis Report • Generated using direct PDF generation', 50, 750, {
              width: 495, 
              align: 'center' 
            });
@@ -1692,7 +1774,7 @@ class AnalyticsService {
         stream.on('error', (error) => reject(error));
       });
     } catch (error) {
-      logger.error('ANALYTICS', 'Direct PDF generation failed:', error);
+      logger.error('ANALYSIS', 'Direct PDF generation failed:', error);
       throw new Error(`Direct PDF generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -1703,10 +1785,10 @@ class AnalyticsService {
    */
   async testReportGeneration(): Promise<{ success: boolean; results: any[] }> {
     try {
-      logger.info('ANALYTICS', 'Starting report generation test...');
+      logger.info('ANALYSIS', 'Starting report generation test...');
       
-      // Create sample analytics data for testing
-      const sampleAnalytics: AnalyticsData = {
+      // Create sample analysis data for testing
+      const sampleAnalysis: AnalysisData = {
         period: {
           start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
           end: new Date(),
@@ -1776,13 +1858,13 @@ class AnalyticsService {
           // Generate report using the appropriate method with sample data
           switch (format) {
             case 'csv':
-              filePath = await this.generateCSVReport(sampleAnalytics, formatOptions);
+              filePath = await this.generateCSVReport(sampleAnalysis, formatOptions);
               break;
             case 'json':
-              filePath = await this.generateJSONReport(sampleAnalytics, formatOptions);
+              filePath = await this.generateJSONReport(sampleAnalysis, formatOptions);
               break;
             case 'pdf':
-              filePath = await this.generatePDFReport(sampleAnalytics, formatOptions);
+              filePath = await this.generatePDFReport(sampleAnalysis, formatOptions);
               break;
             default:
               throw new Error(`Unsupported format: ${format}`);
@@ -1800,7 +1882,7 @@ class AnalyticsService {
             message: `${format.toUpperCase()} report generated successfully`
           });
           
-          logger.info('ANALYTICS', `Test ${format.toUpperCase()} report: SUCCESS`, {
+          logger.info('ANALYSIS', `Test ${format.toUpperCase()} report: SUCCESS`, {
             filePath,
             fileSize: fileInfo.size
           });
@@ -1812,13 +1894,13 @@ class AnalyticsService {
             message: `Failed to generate ${format.toUpperCase()} report`
           });
           
-          logger.error('ANALYTICS', `Test ${format.toUpperCase()} report: FAILED`, error);
+          logger.error('ANALYSIS', `Test ${format.toUpperCase()} report: FAILED`, error);
         }
       }
 
       const allSuccessful = results.every(result => result.success);
       
-      logger.info('ANALYTICS', 'Report generation test completed', {
+      logger.info('ANALYSIS', 'Report generation test completed', {
         overallSuccess: allSuccessful,
         results: results.map(r => ({ format: r.format, success: r.success }))
       });
@@ -1828,7 +1910,7 @@ class AnalyticsService {
         results
       };
     } catch (error) {
-      logger.error('ANALYTICS', 'Report generation test failed:', error);
+      logger.error('ANALYSIS', 'Report generation test failed:', error);
       return {
         success: false,
         results: [{
@@ -1842,5 +1924,5 @@ class AnalyticsService {
   }
 }
 
-export const analyticsService = new AnalyticsService();
-export default analyticsService;
+export const analysisService = new AnalysisService();
+export default analysisService;

@@ -400,8 +400,8 @@ const pushActivity: AppContextType["pushActivity"] = (evt) => {
             transactionId: appwriteTransaction.id,
           });
           
-          // Track analytics for this transaction
-          const { trackTransactionAnalytics } = await import('@/lib/analyticsHelpers');
+          // Track analysis for this transaction
+          const { trackTransactionAnalytics } = await import('@/lib/analysisHelpers');
           trackTransactionAnalytics(newTransaction, user.$id || user.id || '');
           
         } catch (appwriteError) {
@@ -723,7 +723,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
       cardId,
       amount,
       withdrawalMethod,
-      description
+      description,
+      withdrawalDetails: withdrawalDetails ? 'present' : 'missing'
     });
     
     // Validate user session is active before initiating withdrawal
@@ -737,8 +738,19 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
     }
     
     try {
-      // Use the enhanced withdrawal service
-      const { processWithdrawal } = await import('@/lib/appwrite/withdrawalService');
+      // Use the enhanced withdrawal service with more explicit import
+      logger.info('WITHDRAWALS', '[Enhanced] Importing withdrawal service');
+      const withdrawalService = await import('@/lib/appwrite/withdrawalService');
+      
+      if (!withdrawalService.processWithdrawal) {
+        logger.error('WITHDRAWALS', 'processWithdrawal function not found in imported module', {
+          availableExports: Object.keys(withdrawalService)
+        });
+        return {
+          success: false,
+          error: 'Withdrawal service not available. Please try again.'
+        };
+      }
       
       // Build withdrawal request based on method and details
       const withdrawalRequest = {
@@ -750,18 +762,41 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         ...withdrawalDetails // Spread method-specific details
       };
       
-      logger.info('WITHDRAWALS', '[Enhanced] Executing withdrawal with enhanced service');
+      logger.info('WITHDRAWALS', '[Enhanced] Executing withdrawal with enhanced service', {
+        requestStructure: {
+          cardId: withdrawalRequest.cardId,
+          amount: withdrawalRequest.amount,
+          currency: withdrawalRequest.currency,
+          withdrawalMethod: withdrawalRequest.withdrawalMethod,
+          description: withdrawalRequest.description,
+          detailsPresent: Object.keys(withdrawalDetails || {}).length > 0
+        }
+      });
       
-      const result = await processWithdrawal(withdrawalRequest);
+      const result = await withdrawalService.processWithdrawal(withdrawalRequest);
       
-      if (result.success) {
+      logger.info('WITHDRAWALS', '[Enhanced] Withdrawal service returned result', {
+        success: result?.success,
+        hasData: !!result?.data,
+        hasNewBalance: result?.newBalance !== undefined,
+        hasTransactionId: !!result?.transactionId,
+        error: result?.error
+      });
+      
+      if (result?.success) {
         // Update local card balance optimistically
         if (result.newBalance !== undefined) {
+          logger.info('WITHDRAWALS', '[Enhanced] Updating local card balance', {
+            cardId,
+            oldBalance: cards.find(c => c.id === cardId)?.balance,
+            newBalance: result.newBalance
+          });
           updateCardBalance(cardId, result.newBalance);
         }
         
         // Refresh data with slight delay to ensure database consistency
         setTimeout(() => {
+          logger.info('WITHDRAWALS', '[Enhanced] Triggering data refresh after withdrawal');
           refreshCardBalances();
           refreshTransactions();
         }, 1000);
@@ -769,7 +804,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         logger.info('WITHDRAWALS', '[Enhanced] Withdrawal completed successfully', {
           transactionId: result.transactionId,
           newBalance: result.newBalance,
-          reference: result.data?.reference
+          reference: result.data?.reference,
+          instructions: result.data?.instructions ? 'present' : 'missing'
         });
         
         return {
@@ -781,18 +817,26 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
           instructions: result.data?.instructions
         };
       } else {
-        logger.error('WITHDRAWALS', '[Enhanced] Withdrawal failed', result.error);
+        logger.error('WITHDRAWALS', '[Enhanced] Withdrawal failed with result', {
+          success: result?.success,
+          error: result?.error,
+          fullResult: result
+        });
         return {
           success: false,
-          error: result.error || 'Withdrawal failed'
+          error: result?.error || 'Withdrawal failed. Please try again.'
         };
       }
       
     } catch (error) {
-      logger.error('WITHDRAWALS', '[Enhanced] Withdrawal service error', error);
+      logger.error('WITHDRAWALS', '[Enhanced] Withdrawal service error', {
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorType: typeof error
+      });
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Withdrawal service unavailable'
+        error: error instanceof Error ? error.message : 'Withdrawal service unavailable. Please try again.'
       };
     }
   };

@@ -49,7 +49,7 @@ Successfully refactored the entire bank_app codebase from Firebase to **Appwrite
 
 #### Transaction Service (`lib/appwrite/transactionService.ts`)
 - **✅ Transaction Management**: Full CRUD with real-time notifications
-- **✅ Advanced Analytics**: Transaction statistics and trends
+- **✅ Advanced Analysis**: Transaction statistics and trends
 - **✅ Real-time Notifications**: Live transaction updates and status changes
 - **✅ Filtering & Search**: Date ranges, categories, amounts, recipients
 - **✅ Card-specific Subscriptions**: Real-time updates for specific cards
@@ -57,13 +57,13 @@ Successfully refactored the entire bank_app codebase from Firebase to **Appwrite
 #### Activity Service (`lib/appwrite/activityService.ts`)
 - **✅ Activity Logging**: Real-time activity feed with comprehensive filtering
 - **✅ Live Activity Stream**: Real-time updates for user activities
-- **✅ Activity Analytics**: Activity filtering by type and date
+- **✅ Activity Analysis**: Activity filtering by type and date
 - **✅ Metadata Support**: Rich metadata for detailed activity tracking
 
 #### Notification Service (`lib/appwrite/notificationService.ts`)
 - **✅ Notification Management**: Create, read, update, archive notifications
 - **✅ Real-time Notifications**: Live notification updates and read receipts
-- **✅ Notification Analytics**: Unread counts, statistics by type
+- **✅ Notification Analysis**: Unread counts, statistics by type
 - **✅ Bulk Operations**: Mark all as read, batch operations
 - **✅ Smart Subscriptions**: Unread-only subscriptions for efficiency
 
@@ -98,7 +98,7 @@ Successfully refactored the entire bank_app codebase from Firebase to **Appwrite
 - **Optimistic Updates**: Immediate UI updates with background sync
 
 ### Advanced Features
-- **Comprehensive Analytics**: Transaction statistics, notification analytics
+- **Comprehensive Analysis**: Transaction statistics, notification analysis
 - **Smart Filtering**: Advanced querying with multiple criteria
 - **Activity Logging**: Automatic logging of all user actions
 - **Error Boundaries**: Robust error handling throughout the stack
@@ -112,7 +112,7 @@ lib/appwrite/
 ├── auth.ts                # Authentication service
 ├── database.ts            # Generic database service with real-time
 ├── cardService.ts         # Card management with real-time
-├── transactionService.ts  # Transaction service with analytics
+├── transactionService.ts  # Transaction service with analysis
 ├── activityService.ts     # Activity logging and feeds
 ├── notificationService.ts # Notification management
 └── index.ts              # Service exports

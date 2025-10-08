@@ -10,7 +10,7 @@ import { logger } from '@/lib/logger';
 
 type Period = 'week' | 'month' | 'year';
 
-interface AnalyticsData {
+interface AnalysisData {
   labels: string[];
   income: number[];
   expenses: number[];
@@ -20,11 +20,11 @@ interface AnalyticsData {
   categoryBreakdown: { name: string; amount: number; color: string }[];
 }
 
-interface TransactionAnalyticsProps {
+interface TransactionAnalysisProps {
   cardId?: string; // Optional card ID to filter transactions
 }
 
-export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {}) {
+export function TransactionAnalysis({ cardId }: TransactionAnalysisProps = {}) {
   const { colors } = useTheme();
   const { transactions, activeCard } = useApp();
   const [selectedPeriod, setSelectedPeriod] = useState<Period>('month');
@@ -32,7 +32,7 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
   const screenWidth = Dimensions.get('window').width;
 
   // Filter and process transactions based on selected period and card
-  const analyticsData = useMemo((): AnalyticsData => {
+  const analysisData = useMemo((): AnalysisData => {
     if (!transactions || transactions.length === 0) {
       return {
         labels: [],
@@ -145,11 +145,11 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
              ['withdrawal', 'payment', 'purchase', 'fee', 'transfer'].includes(t.type?.toLowerCase());
     });
     
-    logger.info('ANALYTICS', 'Processing expense transactions for pie chart', {
-      totalTransactions: filteredTransactions.length,
-      expenseTransactions: expenseTransactions.length,
-      cardFilter: targetCardId
-    });
+      logger.info('ANALYSIS', 'Processing expense transactions for pie chart', {
+        totalTransactions: filteredTransactions.length,
+        expenseTransactions: expenseTransactions.length,
+        cardFilter: targetCardId
+      });
     
     expenseTransactions.forEach(transaction => {
       // Normalize category names and provide meaningful defaults
@@ -212,7 +212,7 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
         };
       });
     
-    logger.info('ANALYTICS', 'Category breakdown processed', {
+    logger.info('ANALYSIS', 'Category breakdown processed', {
       categories: categoryBreakdown.length,
       totalCategorizedAmount: categoryBreakdown.reduce((sum, cat) => sum + cat.amount, 0),
       topCategory: categoryBreakdown[0]?.name,
@@ -257,15 +257,15 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
   };
 
   const lineData = {
-    labels: analyticsData.labels.length > 0 ? analyticsData.labels : ['No Data'],
+    labels: analysisData.labels.length > 0 ? analysisData.labels : ['No Data'],
     datasets: [
       {
-        data: analyticsData.income.length > 0 ? analyticsData.income : [0],
+        data: analysisData.income.length > 0 ? analysisData.income : [0],
         color: (opacity = 1) => withAlpha(colors.positive, opacity),
         strokeWidth: 3,
       },
       {
-        data: analyticsData.expenses.length > 0 ? analyticsData.expenses : [0],
+        data: analysisData.expenses.length > 0 ? analysisData.expenses : [0],
         color: (opacity = 1) => withAlpha(colors.negative, opacity),
         strokeWidth: 3,
       },
@@ -273,7 +273,7 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
     legend: ['Income', 'Expenses'],
   };
 
-  const pieData = analyticsData.categoryBreakdown.map((item, index) => ({
+  const pieData = analysisData.categoryBreakdown.map((item, index) => ({
     name: item.name,
     population: item.amount,
     color: item.color,
@@ -290,7 +290,7 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
   return (
     <View style={[styles.container, { backgroundColor: colors.card }]}>
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>Analytics</Text>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>Analysis</Text>
         
         {/* Period Filter */}
         <ScrollView 
@@ -324,11 +324,11 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
         </ScrollView>
       </View>
 
-      {analyticsData.labels.length === 0 ? (
+      {analysisData.labels.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No transaction data</Text>
           <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-            Make some transactions to see your analytics here
+            Make some transactions to see your analysis here
           </Text>
         </View>
       ) : (
@@ -338,14 +338,14 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
             <View style={[styles.summaryCard, { backgroundColor: colors.background }]}>
               <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Income</Text>
               <Text style={[styles.summaryValue, { color: colors.positive }]}>
-                GHS {analyticsData.totalIncome.toFixed(2)}
+                GHS {analysisData.totalIncome.toFixed(2)}
               </Text>
             </View>
             
             <View style={[styles.summaryCard, { backgroundColor: colors.background }]}>
               <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Expenses</Text>
               <Text style={[styles.summaryValue, { color: colors.negative }]}>
-                GHS {analyticsData.totalExpenses.toFixed(2)}
+                GHS {analysisData.totalExpenses.toFixed(2)}
               </Text>
             </View>
             
@@ -353,9 +353,9 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
               <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Net</Text>
               <Text style={[
                 styles.summaryValue, 
-                { color: analyticsData.netAmount >= 0 ? colors.positive : colors.negative }
+                { color: analysisData.netAmount >= 0 ? colors.positive : colors.negative }
               ]}>
-                GHS {analyticsData.netAmount.toFixed(2)}
+                GHS {analysisData.netAmount.toFixed(2)}
               </Text>
             </View>
           </View>
@@ -379,7 +379,7 @@ export function TransactionAnalytics({ cardId }: TransactionAnalyticsProps = {})
           </View>
 
           {/* Pie Chart */}
-          {analyticsData.categoryBreakdown.length > 0 && (
+          {analysisData.categoryBreakdown.length > 0 && (
             <View style={styles.chartSection}>
               <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>Expense Categories</Text>
               <PieChart
@@ -477,21 +477,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginBottom: 16,
     gap: 8,
+    justifyContent: 'space-between',
   },
   summaryCard: {
     flex: 1,
-    padding: 12,
+    padding: 10,
     borderRadius: 12,
     alignItems: 'center',
+    minHeight: 75,
+    justifyContent: 'center',
   },
   summaryLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
-    marginBottom: 4,
+    textAlign: 'center',
+    marginBottom: 6,
+    lineHeight: 13,
+    flexWrap: 'wrap',
+    flexShrink: 1,
   },
   summaryValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 17,
+    flexWrap: 'wrap',
+    flexShrink: 1,
   },
   chartSection: {
     marginBottom: 24,

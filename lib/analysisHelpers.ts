@@ -109,7 +109,7 @@ export async function trackEvent(eventName: string, eventData: any): Promise<voi
     // - Custom analytics API
     
     // Example with hypothetical analytics service:
-    // await analyticsService.track(eventName, eventData);
+    // await analysisService.track(eventName, eventData);
     
     // For now, we'll just store it in the app's internal analytics
     await storeAnalyticsEvent(eventName, eventData);
@@ -128,15 +128,15 @@ async function storeAnalyticsEvent(eventName: string, eventData: any): Promise<v
     const { databaseService } = await import('./appwrite/database');
     const appwriteConfig = await import('./appwrite/config');
     
-    // Check if analytics collection is configured
-    const analyticsCollectionId = 'analytics_events';
+    // Check if analysis collection is configured
+    const analysisCollectionId = 'analysis_events';
     if (!appwriteConfig.default.databaseId) {
       logger.debug('ANALYTICS', 'Database not configured, skipping analytics storage');
       return;
     }
     
     await databaseService.createDocument(
-      analyticsCollectionId,
+      analysisCollectionId,
       {
         eventName,
         eventData: JSON.stringify(eventData), // Store as JSON string

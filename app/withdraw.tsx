@@ -167,6 +167,14 @@ export default function WithdrawScreen() {
       
       const result = await withLoading(
         async () => {
+          logger.info('SCREEN', '[WithdrawScreen] About to call makeWithdrawal with:', {
+            cardId: activeCard.id,
+            amount: withdrawalAmount,
+            method: activeTab,
+            detailsKeys: Object.keys(withdrawalDetails),
+            description: `Withdrawal via ${getMethodDisplayName()}`
+          });
+          
           const withdrawalResult = await makeWithdrawal(
             activeCard.id,
             withdrawalAmount,
@@ -175,7 +183,14 @@ export default function WithdrawScreen() {
             `Withdrawal via ${getMethodDisplayName()}`
           );
           
-          logger.info('SCREEN', '[WithdrawScreen] makeWithdrawal result:', withdrawalResult);
+          logger.info('SCREEN', '[WithdrawScreen] makeWithdrawal returned:', {
+            success: withdrawalResult?.success,
+            error: withdrawalResult?.error,
+            newBalance: withdrawalResult?.newBalance,
+            transactionId: withdrawalResult?.transactionId,
+            reference: withdrawalResult?.reference,
+            hasInstructions: !!withdrawalResult?.instructions
+          });
           return withdrawalResult;
         },
         {
@@ -185,9 +200,28 @@ export default function WithdrawScreen() {
         }
       );
       
-      logger.info('SCREEN', '[WithdrawScreen] Final result from withLoading:', result);
+      logger.info('SCREEN', '[WithdrawScreen] Final result from withLoading:', {
+        hasResult: !!result,
+        success: result?.success,
+        error: result?.error,
+        newBalance: result?.newBalance,
+        transactionId: result?.transactionId,
+        reference: result?.reference
+      });
       
-      if (result?.success) {
+      // Always ensure we have a result object
+      if (!result) {
+        logger.error('SCREEN', '[WithdrawScreen] No result returned from withdrawal process');
+        showError(
+          'Withdrawal Failed',
+          'No response received from withdrawal service. Please try again.'
+        );
+        return;
+      }
+      
+      if (result.success) {
+        logger.info('SCREEN', '[WithdrawScreen] Processing successful withdrawal');
+        
         // Prepare success modal data
         const successData: WithdrawalSuccessData = {
           amount: withdrawalAmount,
@@ -206,6 +240,13 @@ export default function WithdrawScreen() {
           ...withdrawalDetails
         };
         
+        logger.info('SCREEN', '[WithdrawScreen] Setting success modal data:', {
+          amount: successData.amount,
+          newBalance: successData.sourceNewBalance,
+          transactionId: successData.transactionId,
+          reference: successData.reference
+        });
+        
         setWithdrawalSuccessData(successData);
         setShowSuccessModal(true);
         
@@ -218,15 +259,25 @@ export default function WithdrawScreen() {
         logger.info('SCREEN', '[WithdrawScreen] Enhanced withdrawal completed successfully', {
           transactionId: result.transactionId,
           newBalance: result.newBalance,
-          reference: result.reference
+          reference: result.reference,
+          successModalShown: true
         });
         
       } else {
-        logger.error('SCREEN', '[WithdrawScreen] Withdrawal failed with result:', result);
+        logger.error('SCREEN', '[WithdrawScreen] Withdrawal failed with result:', {
+          success: result.success,
+          error: result.error,
+          fullResult: result
+        });
+        
+        const errorMessage = result.error || 'An error occurred while processing your withdrawal. Please try again.';
+        
         showError(
           'Withdrawal Failed',
-          result?.error || 'An error occurred while processing your withdrawal.'
+          errorMessage
         );
+        
+        logger.info('SCREEN', '[WithdrawScreen] Error toast shown with message:', errorMessage);
       }
     } catch (error) {
       logger.error('SCREEN', '[WithdrawScreen] Withdrawal exception:', error);

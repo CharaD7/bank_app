@@ -326,7 +326,7 @@ export default function SettingsScreen() {
                     color: analyticsEnabled ? colors.textPrimary : createMutedColor(colors.textPrimary, colors.background),
                     fontWeight: analyticsEnabled ? '700' : '600'
                   }
-                ]}>Share Analytics Data</Text>
+                ]}>Share Analysis Data</Text>
                 <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Help improve our services by sharing anonymous usage data</Text>
               </View>
             </View>
@@ -342,11 +342,11 @@ export default function SettingsScreen() {
                   'success',
                   value ? 'Anonymous usage data will be collected to help improve the app. No personal information is shared.' 
                         : 'No usage data will be collected.',
-                  'Analytics ' + (value ? 'Enabled' : 'Disabled')
+                  'Analysis ' + (value ? 'Enabled' : 'Disabled')
                 );
               }}
-              accessibilityLabel="Toggle analytics data sharing"
-              accessibilityHint="Enables or disables sharing of anonymous usage analytics"
+              accessibilityLabel="Toggle analysis data sharing"
+              accessibilityHint="Enables or disables sharing of anonymous usage analysis"
             />
           </View>
         </View>
