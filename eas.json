@@ -24,7 +24,7 @@
         "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
       },
       "android": {
-        "buildType": "app-bundle",
+        "buildType": "apk",
         "gradleCommand": ":app:assembleDevelopmentDebug"
       },
       "ios": {
