@@ -11,7 +11,7 @@
       "cache": {
         "disabled": false,
         "cacheDefaultPaths": true,
-        "customPaths": [
+        "paths": [
           "node_modules",
           ".expo",
           "assets/fonts",
@@ -37,7 +37,6 @@
       "distribution": "internal",
       "cache": {
         "disabled": false,
-        "cacheDefaultPaths": true,
         "customPaths": [
           "node_modules",
           ".expo",
