@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { Client, Databases, ID, Query } from 'node-appwrite';
 import { appwriteAuth } from './middleware/auth';
 import { luhnValid, detectBrand } from './utils/luhn';
+import { validatePhoneForNetwork, isValidGhanaianMobileNumber } from './utils/phoneValidation';
+import { logger } from './utils/logger';
 
 const app = new Hono();
 
@@ -36,6 +38,21 @@ function createDb() {
   if (apiKey) client.setKey(apiKey);
   const databases = new Databases(client);
   return { client, databases };
+}
+
+// Safe getDocument helper for server: tries getDocument and falls back to listDocuments by $id
+async function safeGetDocument(databases: Databases, databaseId: string, collectionId: string, documentId: string) {
+  try {
+    const doc = await databases.getDocument(databaseId, collectionId, documentId).catch(() => null as any);
+    if (doc && doc.$id) return doc;
+  } catch (err) {}
+
+  try {
+    const list = await databases.listDocuments(databaseId, collectionId, [Query.equal('$id', documentId), Query.limit(1)]).catch(() => null as any);
+    if (list && list.documents && list.documents.length > 0) return list.documents[0];
+  } catch (err) {}
+
+  return null;
 }
 
 // Idempotency cache (in-memory, dev)
@@ -73,6 +90,34 @@ const TransferCreate = z.object({
   description: z.string().max(256).optional()
 });
 
+const DepositCreate = z.object({
+  amount: z.number().positive().max(1_000_000_000),
+  currency: z.literal('GHS'),
+  cardId: z.string().min(1), // card ID to deposit into
+  description: z.string().max(256).optional(),
+  escrowMethod: z.enum(['bank_transfer', 'mobile_money', 'cash']).optional().default('mobile_money'),
+  // Mobile money specific fields
+  mobileNetwork: z.enum(['mtn', 'telecel', 'airteltigo']).optional(),
+  mobileNumber: z.string().optional(),
+  reference: z.string().max(50).optional()
+}).refine((data) => {
+  // If mobile money is selected, validate network and phone number
+  if (data.escrowMethod === 'mobile_money') {
+    if (!data.mobileNetwork) {
+      return false;
+    }
+    if (!data.mobileNumber) {
+      return false;
+    }
+    // Validate phone number for the selected network
+    const validation = validatePhoneForNetwork(data.mobileNumber, data.mobileNetwork);
+    return validation.isValid;
+  }
+  return true;
+}, {
+  message: "Invalid mobile money details: network and valid phone number are required"
+});
+
 // Authenticated routes
 const v1 = new Hono();
 
@@ -107,10 +152,8 @@ v1.post('/cards', appwriteAuth, async (c) => {
     const validBrands = ['visa', 'mastercard', 'amex', 'verve', 'discover', 'unionpay', 'jcb'];
     const brand = validBrands.includes(detectedBrand) ? detectedBrand : 'visa'; // Default to visa
     const last4 = normalized.slice(-4);
-    const token = `tok_${crypto.randomUUID()}`; // always random token
-    const fingerprint = IS_DUMMY
-      ? `fp_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`
-      : `fp_${Buffer.from(normalized).toString('base64url').slice(-16)}`;
+    const token = `tok_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`; // simple random token
+    const fingerprint = `fp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
     const { databases } = createDb();
     const databaseId = process.env.APPWRITE_DATABASE_ID!;
@@ -118,7 +161,12 @@ v1.post('/cards', appwriteAuth, async (c) => {
 
     // Log non-sensitive diagnostics
     const hasApiKey = Boolean(process.env.APPWRITE_API_KEY);
-    console.log('[cards.create] begin', { userId: user.$id, hasApiKey, databaseIdPresent: Boolean(databaseId), cardsCollectionPresent: Boolean(cardsCollectionId) });
+    logger.info('CARDS', 'cards.create begin', { 
+      userId: user.$id, 
+      hasApiKey, 
+      databaseIdPresent: Boolean(databaseId), 
+      cardsCollectionPresent: Boolean(cardsCollectionId) 
+    });
 
     const doc = await databases.createDocument(databaseId, cardsCollectionId, ID.unique(), {
       userId: user.$id,
@@ -143,7 +191,7 @@ v1.post('/cards', appwriteAuth, async (c) => {
       created: doc.$createdAt
     };
     if (idemKey) idem.set(`${user.$id}:${idemKey}`, { status: 200, body, expiresAt: Date.now() + IDEM_TTL_MS });
-    console.log('[cards.create] success', { userId: user.$id, docId: doc.$id });
+    logger.info('CARDS', 'cards.create success', { userId: user.$id, docId: doc.$id });
     return c.json(body);
   } catch (e: any) {
     const errInfo = {
@@ -152,7 +200,7 @@ v1.post('/cards', appwriteAuth, async (c) => {
       type: e?.type,
       response: e?.response || undefined,
     };
-    console.error('[cards.create] error', { userId: (c.get('user') as any)?.$id, ...errInfo });
+    logger.error('CARDS', 'cards.create error', { userId: (c.get('user') as any)?.$id, ...errInfo });
     return c.json({ error: 'server_error', ...errInfo }, 500);
   }
 });
@@ -193,7 +241,7 @@ v1.delete('/cards/:id', appwriteAuth, async (c) => {
   const databaseId = process.env.APPWRITE_DATABASE_ID!;
   const cardsCollectionId = process.env.APPWRITE_CARDS_COLLECTION_ID!;
 
-  const res = await databases.getDocument(databaseId, cardsCollectionId, id).catch(() => null as any);
+  const res = await safeGetDocument(databases, databaseId, cardsCollectionId, id);
   if (!res) return c.json({ error: 'not_found' }, 404);
   if (res.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
   await databases.deleteDocument(databaseId, cardsCollectionId, id);
@@ -254,7 +302,7 @@ v1.get('/transactions', appwriteAuth, async (c) => {
         let cardQuery = [];
         if (d.cardId) {
           cardQuery = [Query.equal('userId', user.$id)];
-          const card = await databases.getDocument(databaseId, cardsCol, d.cardId).catch(() => null);
+          const card = await safeGetDocument(databases, databaseId, cardsCol, d.cardId);
           if (card && card.userId === user.$id) cardInfo = card;
         } else if (d.source) {
           // Find card by token for older payment transactions
@@ -372,7 +420,7 @@ v1.post('/payments/:id/capture', appwriteAuth, async (c) => {
   const databaseId = process.env.APPWRITE_DATABASE_ID!;
   const txCol = process.env.APPWRITE_TRANSACTIONS_COLLECTION_ID!;
   const cardsCol = process.env.APPWRITE_CARDS_COLLECTION_ID!;
-  const doc: any = await databases.getDocument(databaseId, txCol, id).catch(() => null);
+  const doc: any = await safeGetDocument(databases, databaseId, txCol, id);
   if (!doc) return c.json({ error: 'not_found' }, 404);
   if (doc.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
   if (doc.status === 'captured') return c.json({ id: doc.$id, status: 'captured' });
@@ -405,7 +453,7 @@ v1.post('/payments/:id/refund', appwriteAuth, async (c) => {
   const databaseId = process.env.APPWRITE_DATABASE_ID!;
   const txCol = process.env.APPWRITE_TRANSACTIONS_COLLECTION_ID!;
   const cardsCol = process.env.APPWRITE_CARDS_COLLECTION_ID!;
-  const doc: any = await databases.getDocument(databaseId, txCol, id).catch(() => null);
+  const doc: any = await safeGetDocument(databases, databaseId, txCol, id);
   if (!doc) return c.json({ error: 'not_found' }, 404);
   if (doc.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
   if (doc.status === 'refunded') return c.json({ id: doc.$id, status: 'refunded' });
@@ -460,9 +508,9 @@ v1.post('/transfers', appwriteAuth, async (c) => {
   
   try {
     // Step 1: Get and validate sender card
-    const senderCard: any = await databases.getDocument(databaseId, cardsCol, cardId).catch(() => null);
-    if (!senderCard) return c.json({ error: 'card_not_found' }, 404);
-    if (senderCard.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
+  const senderCard: any = await safeGetDocument(databases, databaseId, cardsCol, cardId);
+  if (!senderCard) return c.json({ error: 'card_not_found' }, 404);
+  if (senderCard.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
     
     const currentBalance = typeof senderCard.balance === 'number' ? senderCard.balance : (typeof senderCard.startingBalance === 'number' ? senderCard.startingBalance : DEFAULT_CARD_BALANCE);
     if (amount > currentBalance) return c.json({ error: 'insufficient_funds', available: currentBalance }, 400);
@@ -471,7 +519,7 @@ v1.post('/transfers', appwriteAuth, async (c) => {
     
     // Step 2: Search for recipient card that matches both card number and holder name
     const cleanRecipientNumber = recipient.replace(/[^0-9]/g, ''); // Remove all non-digits
-    console.log('[transfer.create] searching for recipient', { recipientNumber: cleanRecipientNumber, recipientName });
+    logger.info('TRANSFERS', 'searching for recipient', { recipientNumber: cleanRecipientNumber, recipientName });
     
     // Search for cards with matching last4 digits first
     const last4 = cleanRecipientNumber.slice(-4);
@@ -480,7 +528,7 @@ v1.post('/transfers', appwriteAuth, async (c) => {
       Query.limit(50) // Reasonable limit to avoid performance issues
     ]);
     
-    console.log('[transfer.create] found', potentialCards.documents.length, 'cards with matching last4:', last4);
+    logger.info('TRANSFERS', 'potential matches found', { count: potentialCards.documents.length, last4 });
     
     // Filter by exact card number match and holder name (if provided)
     for (const card of potentialCards.documents) {
@@ -493,7 +541,7 @@ v1.post('/transfers', appwriteAuth, async (c) => {
         
         if (!recipientName || cardHolderName === providedName) {
           recipientCard = card;
-          console.log('[transfer.create] found matching recipient card:', {
+          logger.info('TRANSFERS', 'found matching recipient card', {
             cardId: card.$id,
             userId: card.userId,
             holderName: card.holder,
@@ -527,7 +575,7 @@ v1.post('/transfers', appwriteAuth, async (c) => {
       await databases.updateDocument(databaseId, cardsCol, recipientCard.$id, { balance: newRecipientBalance });
       recipientCredited = true;
       
-      console.log('[transfer.create] credited recipient card', {
+      logger.info('TRANSFERS', 'credited recipient card', {
         recipientCardId: recipientCard.$id,
         previousBalance: recipientCurrentBalance,
         newBalance: newRecipientBalance,
@@ -571,9 +619,9 @@ v1.post('/transfers', appwriteAuth, async (c) => {
             message: `You received GHS ${amount.toFixed(2)} from ${senderCard.holder}. Your new balance is GHS ${newRecipientBalance!.toFixed(2)}.`,
             unread: true
           });
-          console.log('[transfer.create] notification sent to recipient:', recipientCard.userId);
+          logger.info('TRANSFERS', 'notification sent to recipient', { recipientUserId: recipientCard.userId });
         } catch (notifError) {
-          console.warn('[transfer.create] failed to send notification:', notifError);
+          logger.warn('TRANSFERS', 'failed to send notification', { error: notifError });
           // Don't fail the transfer if notification fails
         }
       }
@@ -596,7 +644,7 @@ v1.post('/transfers', appwriteAuth, async (c) => {
     
     if (idemKey) idem.set(`${user.$id}:${idemKey}`, { status: 200, body, expiresAt: Date.now() + IDEM_TTL_MS });
     
-    console.log('[transfer.create] success', {
+    logger.info('TRANSFERS', 'transfer success', {
       userId: user.$id,
       cardId,
       amount,
@@ -610,21 +658,21 @@ v1.post('/transfers', appwriteAuth, async (c) => {
     
   } catch (e: any) {
     // Rollback logic: if any balance was changed, restore it
-    console.error('[transfer.create] error occurred, attempting rollback', { error: e?.message });
+    logger.error('TRANSFERS', 'transfer error occurred, attempting rollback', { error: e?.message });
     
     if (recipientCredited && recipientCard && originalRecipientBalance >= 0) {
       try {
         await databases.updateDocument(databaseId, cardsCol, recipientCard.$id, { balance: originalRecipientBalance });
-        console.log('[transfer.create] rolled back recipient balance', { recipientCardId: recipientCard.$id, originalBalance: originalRecipientBalance });
+        logger.info('TRANSFERS', 'rolled back recipient balance', { recipientCardId: recipientCard.$id, originalBalance: originalRecipientBalance });
       } catch (rollbackError) {
-        console.error('[transfer.create] failed to rollback recipient balance:', rollbackError);
+        logger.error('TRANSFERS', 'failed to rollback recipient balance', { error: rollbackError });
       }
     }
     
     if (balanceDebited && originalBalance > 0) {
       try {
         await databases.updateDocument(databaseId, cardsCol, cardId, { balance: originalBalance });
-        console.log('[transfer.create] rolled back sender balance', { cardId, originalBalance });
+        logger.info('TRANSFERS', 'rolled back sender balance', { cardId, originalBalance });
         
         // Create a failed transaction record
         await databases.createDocument(databaseId, txCol, ID.unique(), {
@@ -639,7 +687,7 @@ v1.post('/transfers', appwriteAuth, async (c) => {
           failureReason: 'system_error'
         });
       } catch (rollbackError) {
-        console.error('[transfer.create] failed to rollback sender balance:', rollbackError);
+        logger.error('TRANSFERS', 'failed to rollback sender balance', { error: rollbackError });
       }
     }
     
@@ -649,10 +697,397 @@ v1.post('/transfers', appwriteAuth, async (c) => {
       type: e?.type,
       response: e?.response || undefined,
     };
-    console.error('[transfer.create] error', { userId: user.$id, cardId, amount, ...errInfo });
+    logger.error('TRANSFERS', 'transfer error', { userId: user.$id, cardId, amount, ...errInfo });
     return c.json({ error: 'server_error', message: 'Transfer failed. Any debited amounts have been refunded.', ...errInfo }, 500);
   }
 });
+
+// Deposits: create escrow deposit request
+v1.post('/deposits', appwriteAuth, async (c) => {
+  const idemKey = c.req.header('Idempotency-Key');
+  const user = c.get('user') as { $id: string };
+  if (idemKey) {
+    const cached = idem.get(`${user.$id}:${idemKey}`);
+    if (cached) return c.json(cached.body, cached.status);
+  }
+  
+  const parse = DepositCreate.safeParse(await c.req.json().catch(() => ({})));
+  if (!parse.success) return c.json({ error: 'validation_error', details: parse.error.flatten() }, 400);
+  const { amount, currency, cardId, description, escrowMethod, mobileNetwork, mobileNumber, reference } = parse.data;
+  
+  if ((currency || '').toUpperCase() !== 'GHS') return c.json({ error: 'unsupported_currency', expected: 'GHS' }, 400);
+  
+  const { databases } = createDb();
+  const databaseId = process.env.APPWRITE_DATABASE_ID!;
+  const cardsCol = process.env.APPWRITE_CARDS_COLLECTION_ID!;
+  const txCol = process.env.APPWRITE_TRANSACTIONS_COLLECTION_ID!;
+  const notifCol = process.env.APPWRITE_NOTIFICATIONS_COLLECTION_ID;
+  if (!txCol || !cardsCol) return c.json({ error: 'server_missing_collections' }, 500);
+  
+  try {
+  // Step 1: Validate card belongs to user
+  const card: any = await safeGetDocument(databases, databaseId, cardsCol, cardId);
+  if (!card) return c.json({ error: 'card_not_found' }, 404);
+  if (card.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
+    
+    // Step 2: Create pending deposit transaction (escrow phase)
+    const depositDoc = await databases.createDocument(databaseId, txCol, ID.unique(), {
+      userId: user.$id,
+      cardId: cardId,
+      amount: amount, // Positive for incoming deposit
+      currency: currency.toUpperCase(),
+      description: description || `${escrowMethod.replace('_', ' ')} deposit`,
+      status: escrowMethod === 'cash' ? 'completed' : 'pending', // Cash is immediate, others are pending
+      type: 'deposit',
+      escrowMethod,
+      mobileNetwork: mobileNetwork || null,
+      mobileNumber: mobileNumber || null,
+      reference: reference || null,
+      pendingUntil: escrowMethod === 'cash' ? null : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24h expiry for non-cash
+    });
+    
+    // Step 3: Handle immediate cash deposits
+    if (escrowMethod === 'cash') {
+      // For cash deposits, immediately update the card balance
+      const currentBalance = typeof card.balance === 'number' ? card.balance : 
+                           (typeof card.startingBalance === 'number' ? card.startingBalance : DEFAULT_CARD_BALANCE);
+      const newBalance = currentBalance + amount;
+      
+      // Update card balance immediately
+      await databases.updateDocument(databaseId, cardsCol, cardId, { balance: newBalance });
+      
+      // Create success notification
+      if (notifCol) {
+        try {
+          await databases.createDocument(databaseId, notifCol, ID.unique(), {
+            userId: user.$id,
+            type: 'transaction',
+            title: 'Cash Deposit Completed',
+            message: `Your cash deposit of GHS ${amount.toFixed(2)} has been successfully added to your card. New balance: GHS ${newBalance.toFixed(2)}.`,
+            unread: true
+          });
+        } catch (notifError) {
+          logger.warn('DEPOSITS', 'failed to send cash deposit notification', { error: notifError });
+        }
+      }
+      
+      const body = {
+        id: depositDoc.$id,
+        status: 'completed',
+        amount: amount,
+        currency: currency.toUpperCase(),
+        cardId,
+        escrowMethod,
+        newBalance,
+        confirmationId: `CASH-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+        created: depositDoc.$createdAt
+      };
+      
+      if (idemKey) idem.set(`${user.$id}:${idemKey}`, { status: 200, body, expiresAt: Date.now() + IDEM_TTL_MS });
+      
+      logger.info('DEPOSITS', 'cash deposit completed immediately', {
+        userId: user.$id,
+        depositId: depositDoc.$id,
+        cardId,
+        amount,
+        newBalance
+      });
+      
+      return c.json(body);
+    }
+    
+    // Step 4: Generate escrow payment instructions for non-cash deposits
+    const escrowInstructions = generateEscrowInstructions(escrowMethod, amount, depositDoc.$id, mobileNetwork, mobileNumber, reference);
+    
+    const body = {
+      id: depositDoc.$id,
+      status: 'pending',
+      amount: amount,
+      currency: currency.toUpperCase(),
+      cardId,
+      escrowMethod,
+      mobileNetwork,
+      instructions: escrowInstructions,
+      expiresAt: depositDoc.pendingUntil,
+      created: depositDoc.$createdAt
+    };
+    
+    if (idemKey) idem.set(`${user.$id}:${idemKey}`, { status: 200, body, expiresAt: Date.now() + IDEM_TTL_MS });
+    
+    logger.info('DEPOSITS', 'pending deposit created', {
+      userId: user.$id,
+      depositId: depositDoc.$id,
+      cardId,
+      amount,
+      escrowMethod
+    });
+    
+    return c.json(body);
+    
+  } catch (e: any) {
+    const errInfo = {
+      message: e?.message,
+      code: e?.code,
+      type: e?.type,
+      response: e?.response || undefined,
+    };
+    logger.error('DEPOSITS', 'deposit create error', { userId: user.$id, cardId, amount, ...errInfo });
+    return c.json({ error: 'server_error', message: 'Failed to create deposit request', ...errInfo }, 500);
+  }
+});
+
+// Deposits: confirm escrow deposit (simulate payment confirmation)
+v1.post('/deposits/:id/confirm', appwriteAuth, async (c) => {
+  const user = c.get('user') as { $id: string };
+  const id = c.req.param('id');
+  const { databases } = createDb();
+  const databaseId = process.env.APPWRITE_DATABASE_ID!;
+  const txCol = process.env.APPWRITE_TRANSACTIONS_COLLECTION_ID!;
+  const cardsCol = process.env.APPWRITE_CARDS_COLLECTION_ID!;
+  const notifCol = process.env.APPWRITE_NOTIFICATIONS_COLLECTION_ID;
+  
+  try {
+    // Step 1: Get and validate deposit transaction
+  const depositDoc: any = await safeGetDocument(databases, databaseId, txCol, id);
+    if (!depositDoc) return c.json({ error: 'not_found' }, 404);
+    if (depositDoc.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
+    if (depositDoc.type !== 'deposit') return c.json({ error: 'invalid_transaction_type' }, 400);
+    if (depositDoc.status === 'completed') return c.json({ id: depositDoc.$id, status: 'completed', message: 'Already completed' });
+    if (depositDoc.status === 'failed') return c.json({ error: 'transaction_failed', message: 'Deposit has failed' }, 400);
+    if (depositDoc.status !== 'pending') return c.json({ error: `invalid_status:${depositDoc.status}` }, 409);
+    
+    // Step 2: Check if deposit has expired
+    if (depositDoc.pendingUntil && new Date(depositDoc.pendingUntil) < new Date()) {
+      await databases.updateDocument(databaseId, txCol, id, { status: 'failed', failureReason: 'expired' });
+      return c.json({ error: 'deposit_expired', message: 'Deposit request has expired' }, 400);
+    }
+    
+    // Step 3: Simulate escrow confirmation (in production, verify actual payment)
+    const confirmationResult = await simulateEscrowConfirmation(depositDoc.escrowMethod, depositDoc.amount);
+    if (!confirmationResult.success) {
+      await databases.updateDocument(databaseId, txCol, id, { 
+        status: 'failed', 
+        failureReason: confirmationResult.reason || 'payment_failed'
+      });
+      return c.json({ 
+        error: 'payment_failed', 
+        message: confirmationResult.message || 'Escrow payment could not be confirmed' 
+      }, 400);
+    }
+    
+    // Step 4: Get card and update balance
+    const card: any = await safeGetDocument(databases, databaseId, cardsCol, depositDoc.cardId);
+    if (!card) {
+      await databases.updateDocument(databaseId, txCol, id, { status: 'failed', failureReason: 'card_not_found' });
+      return c.json({ error: 'card_not_found' }, 404);
+    }
+    
+    const currentBalance = typeof card.balance === 'number' ? card.balance : 
+                         (typeof card.startingBalance === 'number' ? card.startingBalance : DEFAULT_CARD_BALANCE);
+    const newBalance = currentBalance + depositDoc.amount;
+    
+    // Step 5: Update card balance
+    await databases.updateDocument(databaseId, cardsCol, depositDoc.cardId, { balance: newBalance });
+    
+    // Step 6: Mark deposit as completed
+    const updatedDeposit = await databases.updateDocument(databaseId, txCol, id, { 
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+      escrowConfirmation: confirmationResult.confirmationId
+    });
+    
+    // Step 7: Create success notification
+    if (notifCol) {
+      try {
+        await databases.createDocument(databaseId, notifCol, ID.unique(), {
+          userId: user.$id,
+          type: 'transaction',
+          title: 'Deposit Completed',
+          message: `Your deposit of GHS ${depositDoc.amount.toFixed(2)} has been successfully added to your card. New balance: GHS ${newBalance.toFixed(2)}.`,
+          unread: true
+        });
+      } catch (notifError) {
+        logger.warn('DEPOSITS', 'failed to send deposit confirmation notification', { error: notifError });
+      }
+    }
+    
+    logger.info('DEPOSITS', 'deposit confirmed and completed', {
+      userId: user.$id,
+      depositId: id,
+      cardId: depositDoc.cardId,
+      amount: depositDoc.amount,
+      newBalance
+    });
+    
+    return c.json({
+      id: updatedDeposit.$id,
+      status: 'completed',
+      amount: depositDoc.amount,
+      cardId: depositDoc.cardId,
+      newBalance,
+      confirmationId: confirmationResult.confirmationId,
+      completedAt: updatedDeposit.completedAt
+    });
+    
+  } catch (e: any) {
+    const errInfo = {
+      message: e?.message,
+      code: e?.code,
+      type: e?.type,
+    };
+    logger.error('DEPOSITS', 'deposit confirm error', { userId: user.$id, depositId: id, ...errInfo });
+    return c.json({ error: 'server_error', message: 'Failed to confirm deposit', ...errInfo }, 500);
+  }
+});
+
+// Helper function to get Ghanaian mobile network details
+function getNetworkDetails(network: string) {
+  switch (network) {
+    case 'mtn':
+      return {
+        name: 'MTN',
+        color: '#FFCC00',
+        ussd: '*170#',
+        shortCode: '170'
+      };
+    case 'telecel':
+      return {
+        name: 'Telecel',
+        color: '#0066CC',
+        ussd: '*110#',
+        shortCode: '110'
+      };
+    case 'airteltigo':
+      return {
+        name: 'AirtelTigo',
+        color: '#FF0000',
+        ussd: '*110#',
+        shortCode: '110'
+      };
+    default:
+      return {
+        name: 'MTN',
+        color: '#FFCC00',
+        ussd: '*170#',
+        shortCode: '170'
+      };
+  }
+}
+
+// Helper function to generate escrow payment instructions
+function generateEscrowInstructions(method: string, amount: number, depositId: string, mobileNetwork?: string, mobileNumber?: string, reference?: string) {
+  switch (method) {
+    case 'mobile_money':
+      const networkDetails = getNetworkDetails(mobileNetwork || 'mtn');
+      return {
+        method: `${networkDetails.name} Mobile Money`,
+        network: mobileNetwork || 'mtn',
+        networkName: networkDetails.name,
+        networkColor: networkDetails.color,
+        steps: [
+          `Open your ${networkDetails.name} mobile money app or dial ${networkDetails.ussd}`,
+          'Select "Send Money" or "Transfer"',
+          `Send GHS ${amount.toFixed(2)} to: ${mobileNumber || '0244-123-456'}`,
+          `Reference: ${reference || `DEP-${depositId.slice(-8).toUpperCase()}`}`,
+          'Save the transaction receipt',
+          'Tap "I\'ve Made Payment" below to confirm your deposit'
+        ],
+        recipientNumber: mobileNumber || '0244-123-456',
+        reference: reference || `DEP-${depositId.slice(-8).toUpperCase()}`,
+        estimatedTime: '2-5 minutes',
+        networkUssd: networkDetails.ussd
+      };
+    case 'bank_transfer':
+      return {
+        method: 'Bank Transfer',
+        steps: [
+          'Log into your mobile banking app',
+          'Select "Transfer to Other Banks"',
+          'Bank: Ghana Commercial Bank',
+          'Account: 1234567890123456',
+          'Name: BankApp Escrow Account',
+          `Amount: GHS ${amount.toFixed(2)}`,
+          `Reference: DEP-${depositId.slice(-8).toUpperCase()}`,
+          'Complete the transfer',
+          'Your deposit will be confirmed within 1 business day'
+        ],
+        bankName: 'Ghana Commercial Bank',
+        accountNumber: '1234567890123456',
+        accountName: 'BankApp Escrow Account',
+        reference: `DEP-${depositId.slice(-8).toUpperCase()}`,
+        estimatedTime: '1-2 business days'
+      };
+    case 'cash':
+      return {
+        method: 'Cash Deposit',
+        steps: [
+          'Visit any of our partner locations',
+          'Present a valid ID',
+          `Deposit GHS ${amount.toFixed(2)}`,
+          `Quote reference: DEP-${depositId.slice(-8).toUpperCase()}`,
+          'Receive your receipt',
+          'Your deposit will be confirmed immediately'
+        ],
+        reference: `DEP-${depositId.slice(-8).toUpperCase()}`,
+        partnerLocations: ['Accra Mall', 'East Legon', 'Kumasi Central'],
+        estimatedTime: 'Immediate'
+      };
+    default:
+      return {
+        method: 'Unknown',
+        steps: ['Contact support for deposit instructions'],
+        estimatedTime: 'Unknown'
+      };
+  }
+}
+
+// Helper function to simulate escrow confirmation
+async function simulateEscrowConfirmation(method: string, amount: number): Promise<{
+  success: boolean;
+  confirmationId?: string;
+  reason?: string;
+  message?: string;
+}> {
+  // Simulate processing delay
+  await new Promise(resolve => setTimeout(resolve, 100));
+  
+  // Simulate different success rates based on method
+  const random = Math.random();
+  let successRate = 0.95; // Default 95% success
+  
+  switch (method) {
+    case 'mobile_money':
+      successRate = 0.98; // Mobile money is very reliable
+      break;
+    case 'bank_transfer':
+      successRate = 0.92; // Bank transfers can have issues
+      break;
+    case 'cash':
+      successRate = 0.99; // Cash is most reliable
+      break;
+  }
+  
+  if (random <= successRate) {
+    return {
+      success: true,
+      confirmationId: `CONF-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`
+    };
+  } else {
+    // Simulate different failure reasons
+    const failureReasons = [
+      { reason: 'insufficient_funds', message: 'Insufficient funds in source account' },
+      { reason: 'invalid_reference', message: 'Invalid or missing payment reference' },
+      { reason: 'network_error', message: 'Network error during payment processing' },
+      { reason: 'timeout', message: 'Payment processing timeout' }
+    ];
+    
+    const failure = failureReasons[Math.floor(Math.random() * failureReasons.length)];
+    return {
+      success: false,
+      ...failure
+    };
+  }
+}
 
 // Simulate transfer processing - in a real system, this would call an external payment API
 async function simulateTransferProcessing(amount: number, recipient: string): Promise<boolean> {
@@ -795,7 +1230,7 @@ v1.post('/notifications', appwriteAuth, async (c) => {
       createdAt: doc.$createdAt
     });
   } catch (e: any) {
-    console.error('[notifications.create] error', { userId: user.$id, error: e?.message });
+    logger.error('NOTIFICATIONS', 'notification create error', { userId: user.$id, error: e?.message });
     return c.json({ error: 'server_error', message: e?.message }, 500);
   }
 });
@@ -849,7 +1284,7 @@ v1.patch('/notifications/:id', appwriteAuth, async (c) => {
   const parsed = z.object({ unread: z.boolean() }).safeParse(body);
   if (!parsed.success) return c.json({ error: 'validation_error', details: parsed.error.flatten() }, 400);
 
-  const doc: any = await databases.getDocument(databaseId, notifCol, id).catch(() => null);
+  const doc: any = await safeGetDocument(databases, databaseId, notifCol, id);
   if (!doc) return c.json({ error: 'not_found' }, 404);
   if (doc.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
   const updated = await databases.updateDocument(databaseId, notifCol, id, { unread: parsed.data.unread });
@@ -865,7 +1300,7 @@ v1.delete('/notifications/:id', appwriteAuth, async (c) => {
   const notifCol = process.env.APPWRITE_NOTIFICATIONS_COLLECTION_ID;
   if (!notifCol) return c.json({ error: 'server_missing_notifications_collection' }, 500);
 
-  const doc: any = await databases.getDocument(databaseId, notifCol, id).catch(() => null);
+  const doc: any = await safeGetDocument(databases, databaseId, notifCol, id);
   if (!doc) return c.json({ error: 'not_found' }, 404);
   if (doc.userId !== user.$id) return c.json({ error: 'forbidden' }, 403);
   await databases.deleteDocument(databaseId, notifCol, id);
@@ -927,7 +1362,7 @@ v1.get('/sentry/env', (c) => {
 
 v1.post('/sentry/test', appwriteAuth, async (c) => {
   const user = (c.get('user') as any) || {};
-  console.error('[sentry:test] sample error triggered', { ts: new Date().toISOString(), user: user.$id || 'anon' });
+  logger.error('SENTRY', 'test error triggered', { ts: new Date().toISOString(), user: user.$id || 'anon' });
   return c.json({ ok: true }, 202);
 });
 
@@ -984,7 +1419,7 @@ v1.get('/diag', async (c) => {
 app.route('/v1', v1);
 
 const port = Number(process.env.PORT || 3000);
-console.log(`[server] listening on http://localhost:${port}`);
+logger.info('SERVER', 'server starting', { port, endpoint: `http://localhost:${port}` });
 export default {
   port,
   fetch: app.fetch

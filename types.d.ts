@@ -1,12 +1,11 @@
-import { Models } from "react-native-appwrite";
-
-export interface User extends Models.Document {
+// Using the app's User shape — Appwrite Models removed
+export interface User {
   name: string;
   email: string;
   avatar: string;
 }
 
-interface CustomInputProps {
+export interface CustomInputProps {
   placeholder?: string;
   value?: string;
   onChangeText?: (text: string) => void;

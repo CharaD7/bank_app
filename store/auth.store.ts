@@ -8,16 +8,49 @@
  * @module store/auth
  */
 import { 
-  account, 
-  getCurrentUser, 
-  signIn, 
-  signOut,
-  uploadProfilePicture,
-  deleteProfilePicture,
-  updateUserProfile 
-} from "@/lib/appwrite";
+  authService, 
+  login as appwriteLogin,
+  logout as appwriteLogout,
+  register as appwriteRegister,
+  getCurrentUser,
+  getUserProfile,
+  updateUserProfile as updateAppwriteUserProfile,
+  updateProfilePicture,
+  createJWT,
+} from "@/lib/appwrite/auth";
 import { User } from "@/types";
 import { create } from "zustand";
+import { logger } from '@/lib/logger';
+import { loginAttemptsService, LoginAttemptResult } from '@/lib/loginAttempts';
+import {
+  BiometricType,
+  BiometricAuthResult,
+  checkBiometricAvailability,
+  authenticateWithBiometrics,
+  setupBiometricAuthentication,
+  disableBiometricAuthentication,
+  isBiometricEnabled,
+  getStoredBiometricType,
+  validateBiometricSetup,
+  clearAllBiometricData,
+  updateLastPasswordLogin,
+} from "@/lib/biometric/biometric.service";
+import { jwtSessionManager } from "@/lib/jwtSessionManager";
+import {
+  isCurrentDeviceTrusted,
+  addCurrentDeviceToTrusted,
+  updateDeviceLastUsed,
+  removeCurrentDeviceFromTrusted,
+  clearTrustedDevicesForUser,
+  shouldAttemptAutoLogin,
+  attemptAutoLogin,
+  isDeviceTrustEnabled,
+  setDeviceTrustEnabled,
+  getTrustedDevicesForUser,
+  DeviceTrackingState,
+  AutoLoginResult,
+  TrustedDevice,
+} from '@/lib/deviceTracking.service';
 
 /**
  * Authentication State Interface
@@ -33,6 +66,24 @@ type AuthState = {
   
   /** Flag indicating whether authentication operations are in progress */
   isLoading: boolean;
+  
+  /** Flag indicating whether biometric authentication is enabled for the current user */
+  biometricEnabled: boolean;
+  
+  /** Type of biometric authentication available and configured */
+  biometricType: BiometricType;
+  
+  /** Timestamp of the last password login for security requirements */
+  lastPasswordLogin: Date | null;
+  
+  /** Current login attempt status and lockout information */
+  loginAttempts: LoginAttemptResult | null;
+  
+  /** Device trust and auto-login state */
+  deviceTrackingState: DeviceTrackingState | null;
+  
+  /** List of trusted devices for the current user */
+  trustedDevices: TrustedDevice[];
   
   /**
    * Sets the authentication state
@@ -60,6 +111,16 @@ type AuthState = {
   fetchAuthenticatedUser: () => Promise<void>;
   
   /**
+   * Registers a new user with email, password, and optional name
+   * @param email - The user's email address
+   * @param password - The user's password
+   * @param name - The user's name (optional)
+   * @returns A promise that resolves when registration completes
+   * @throws Error if registration fails
+   */
+  register: (email: string, password: string, name?: string) => Promise<void>;
+  
+  /**
    * Authenticates a user with email and password
    * @param email - The user's email address
    * @param password - The user's password
@@ -81,17 +142,115 @@ type AuthState = {
    * @throws Error if upload or update fails
    */
   updateProfilePicture: (imageUri: string) => Promise<void>;
+  
+  /**
+   * Updates the user's profile information
+   * @param updates - Partial user profile data to update
+   * @returns A promise that resolves when the update completes
+   * @throws Error if update fails
+   */
+  updateUserProfile: (updates: { name?: string; phoneNumber?: string }) => Promise<void>;
+  
+  /**
+   * Checks biometric availability and updates state
+   * @returns A promise that resolves when the check completes
+   */
+  checkBiometricAvailability: () => Promise<void>;
+  
+  /**
+   * Sets up biometric authentication for the current user
+   * @returns A promise that resolves with the setup result
+   */
+  setupBiometric: () => Promise<BiometricAuthResult>;
+  
+  /**
+   * Authenticates user with biometrics
+   * @returns A promise that resolves with the authentication result
+   */
+  authenticateWithBiometric: () => Promise<BiometricAuthResult>;
+  
+  /**
+   * Disables biometric authentication for the current user
+   * @returns A promise that resolves when biometric auth is disabled
+   */
+  disableBiometric: () => Promise<void>;
+  
+  /**
+   * Updates biometric state from stored values
+   * @returns A promise that resolves when state is updated
+   */
+  loadBiometricState: () => Promise<void>;
+  
+  /**
+   * Checks and loads current login attempt/lockout status for an email
+   * This ensures lockout state persists across app restarts
+   * @param email - Email to check lockout status for
+   * @returns A promise that resolves when status is loaded
+   */
+  checkLoginAttemptStatus: (email: string) => Promise<void>;
+  
+  /**
+   * Attempts auto-login for trusted device if eligible
+   * @param email - Email to attempt auto-login for
+   * @returns A promise that resolves with the auto-login result
+   */
+  attemptAutoLogin: (email: string) => Promise<AutoLoginResult>;
+  
+  /**
+   * Adds current device to trusted devices list
+   * @returns A promise that resolves when device is added
+   */
+  addDeviceToTrusted: () => Promise<void>;
+  
+  /**
+   * Removes current device from trusted devices list
+   * @returns A promise that resolves when device is removed
+   */
+  removeDeviceFromTrusted: () => Promise<void>;
+  
+  /**
+   * Loads device tracking state for current user
+   * @param userId - User ID to check device trust for
+   * @returns A promise that resolves when state is loaded
+   */
+  loadDeviceTrackingState: (userId: string) => Promise<void>;
+  
+  /**
+   * Loads trusted devices list for current user
+   * @returns A promise that resolves when devices are loaded
+   */
+  loadTrustedDevices: () => Promise<void>;
+  
+  /**
+   * Enables or disables device trust feature
+   * @param enabled - Whether to enable device trust
+   * @returns A promise that resolves when setting is updated
+   */
+  setDeviceTrustEnabled: (enabled: boolean) => Promise<void>;
+  
+  /**
+   * Removes a specific trusted device
+   * @param deviceId - Device ID to remove
+   * @returns A promise that resolves when device is removed
+   */
+  removeTrustedDevice: (deviceId: string) => Promise<void>;
 };
 
 /**
  * Authentication store implementation using Zustand
  * Provides state management for user authentication
  */
-const useAuthStore = create<AuthState>((set) => ({
+const useAuthStore = create<AuthState>((set, get) => ({
   // Initial state
   isAuthenticated: false,
   user: null,
   isLoading: true,
+  biometricEnabled: false,
+  biometricType: null,
+  lastPasswordLogin: null,
+  loginAttempts: null,
+  deviceTrackingState: null,
+  trustedDevices: [],
 
   /**
    * Updates the authentication state
@@ -118,56 +277,108 @@ const useAuthStore = create<AuthState>((set) => ({
   fetchAuthenticatedUser: async () => {
     set({ isLoading: true });
     try {
-      //  First check if there is an active session
-      const session = await account.getSession("current");
+      // Check if user session is valid
+      const isValid = await authService.validateSession();
 
-      // If there is an active session, fetch the user
-      if (session) {
+      if (isValid) {
         const user = await getCurrentUser();
+        const userProfile = await getUserProfile();
 
-        if (!user) console.log("No user found");
-
-        if (user) {
+        if (user && userProfile) {
           set({
             isAuthenticated: true,
-            user: user as unknown as User,
+            user: {
+              $id: user.$id,
+              id: user.$id,
+              email: user.email,
+              name: userProfile.name,
+              createdAt: userProfile.createdAt,
+              avatar: userProfile.profilePicture?.url,
+              avatarFileId: userProfile.profilePicture?.id,
+            } as User,
           });
-          // Obtain an Appwrite JWT for server API calls and stash globally
+
+          // Create JWT session for server API calls
           try {
-            const jwt = await account.createJWT();
-            (global as any).__APPWRITE_JWT__ = jwt?.jwt;
+            const jwt = await jwtSessionManager.createAndStoreToken();
+            
             // Seed demo transactions on sign-in (idempotent if transactions exist)
-            try {
-              const { getApiBase } = require('@/lib/api');
-              const url = `${getApiBase()}/v1/dev/seed-transactions`;
-              if (jwt?.jwt) {
+            if (jwt) {
+              try {
+                const apiMod = await import('@/lib/api');
+                const { getApiBase } = apiMod;
+                const url = `${getApiBase()}/v1/dev/seed-transactions`;
                 await fetch(url, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.jwt}` },
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
                   body: JSON.stringify({ count: 20, skipIfNotEmpty: true })
                 }).catch(() => {});
-              }
-            } catch {}
-          } catch (e) {
-            // Non-fatal if JWT cannot be created
-            (global as any).__APPWRITE_JWT__ = undefined;
+              } catch {}
+            }
+          } catch {
+            // Non-fatal if JWT session cannot be created
+            logger.warn('AUTH', 'JWT session creation failed during fetchAuthenticatedUser');
           }
+        } else {
+          await jwtSessionManager.clearSession();
+          set({
+            isAuthenticated: false,
+            user: null,
+          });
         }
       } else {
+        await jwtSessionManager.clearSession();
         set({
           isAuthenticated: false,
           user: null,
         });
-        (global as any).__APPWRITE_JWT__ = undefined;
       }
     } catch (error) {
-      console.log("fetchAuthenticatedUser error", error);
+      logger.error('AUTH', 'fetchAuthenticatedUser error', error);
       // Set authenticated state to false on error
+      await jwtSessionManager.clearSession();
       set({
         isAuthenticated: false,
         user: null,
       });
-      (global as any).__APPWRITE_JWT__ = undefined;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  /**
+   * Registers a new user with email, password, and optional name
+   * @param email - User's email address
+   * @param password - User's password
+   * @param name - User's name (optional)
+   * @throws Error if registration fails
+   */
+  register: async (email: string, password: string, name?: string) => {
+    set({ isLoading: true });
+    try {
+      if (__DEV__) {
+        logger.info('AUTH', 'Starting registration process', { email, name });
+      }
+
+      // Register with Appwrite
+      const authUser = await appwriteRegister({ email, password, name });
+      if (__DEV__) logger.info('AUTH', 'User registered', { userId: authUser.$id });
+
+      logger.info('AUTH', 'Registration completed successfully', { userId: authUser.$id });
+      
+      // Note: User will need to login after registration
+      // We don't automatically log them in for security reasons
+      
+    } catch (error: any) {
+      logger.error('AUTH', 'Registration error', error);
+      
+      // Surface full error to structured logger
+      try {
+        logger.error('AUTH', 'Registration error details:', { error, stack: (error as any)?.stack });
+      } catch {}
+
+      // Re-throw the error (Appwrite auth service already formats errors)
+      throw error;
     } finally {
       set({ isLoading: false });
     }
@@ -184,107 +395,199 @@ const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true });
     try {
       if (__DEV__) {
-        console.log('[Auth Store] Starting login process for:', email);
-      }
-      
-      const session = await signIn(email, password);
-      
-      if (__DEV__) {
-        console.log('[Auth Store] Session created:', { sessionId: session.$id, userId: session.userId });
+        logger.info('AUTH', 'Starting login process', { email });
       }
 
-      if (session) {
-        // If login is successful, fetch the user using getCurrentUser which handles the database lookup
-        if (__DEV__) {
-          console.log('[Auth Store] Fetching user data from database');
-        }
+      // Check login attempts with multiple safety checks to ensure expired lockouts are cleared
+      logger.info('AUTH', 'Performing lockout safety checks', { email });
+      
+      // Step 1: Try to unlock any expired accounts
+      const unlockResult = await loginAttemptsService.unlockExpiredAccount(email);
+      if (unlockResult) {
+        logger.info('AUTH', 'Account was unlocked due to expired lockout', { email });
+      }
+      
+      // Step 2: Check current attempt status
+      let attemptStatus = await loginAttemptsService.checkLoginAttempts(email);
+      set({ loginAttempts: attemptStatus });
+      
+      // Step 3: If blocked, perform additional verification
+      if (!attemptStatus.canAttempt) {
+        logger.info('AUTH', 'Login blocked, performing additional lockout verification', { 
+          email, 
+          isLocked: attemptStatus.isLocked,
+          timeRemaining: attemptStatus.lockoutTimeRemaining 
+        });
         
-        const user = await getCurrentUser();
-
-        if (!user) {
-          console.error('[Auth Store] No user found in database for authenticated session');
-          throw new Error('User not found in database. Your account may not be properly configured.');
+        // Get precise time left
+        const timeLeft = await loginAttemptsService.getLockoutTimeLeft(email);
+        logger.info('AUTH', 'Precise lockout time check', { email, timeLeftSeconds: timeLeft });
+        
+        if (timeLeft <= 0) {
+          // Lockout has definitely expired, force unlock and re-check
+          logger.info('AUTH', 'Forcing account unlock due to expired lockout', { email });
+          await loginAttemptsService.forceUnlockAccount(email);
+          
+          // Re-check status after forced unlock
+          attemptStatus = await loginAttemptsService.checkLoginAttempts(email);
+          set({ loginAttempts: attemptStatus });
+          
+          if (!attemptStatus.canAttempt) {
+            logger.error('AUTH', 'Account still blocked after forced unlock - this should not happen', { email });
+            throw new Error('Login system error. Please contact support.');
+          } else {
+            logger.info('AUTH', 'Account successfully unlocked and ready for login', { email });
+          }
+        } else {
+          // Still within lockout period
+          const timeRemainingFormatted = loginAttemptsService.formatTimeRemaining(attemptStatus.lockoutTimeRemaining || 0);
+          logger.info('AUTH', 'Account still locked, showing lockout message', { 
+            email, 
+            timeRemaining: timeRemainingFormatted 
+          });
+          
+          throw new Error(
+            attemptStatus.isLocked 
+              ? `Account temporarily locked. Too many failed attempts. Try again in ${timeRemainingFormatted}.`
+              : 'Login attempts exceeded. Please try again later.'
+          );
         }
+      }
+      
+      logger.info('AUTH', 'Lockout safety checks passed, proceeding with login', { 
+        email, 
+        remainingAttempts: attemptStatus.remainingAttempts 
+      });
 
-        if (__DEV__) {
-          console.log('[Auth Store] User data retrieved:', { userId: user.$id, email: user.email });
-        }
+      // Login with Appwrite
+      const { user: authUser } = await appwriteLogin({ email, password });
+      if (__DEV__) logger.info('AUTH', 'User authenticated', { userId: authUser.$id });
+
+      // Get user profile from database
+      const userProfile = await getUserProfile(authUser.$id);
+      if (__DEV__) logger.info('AUTH', 'User profile retrieved');
+
+      if (!userProfile) {
+        logger.warn('AUTH', 'No user profile found, creating fallback profile');
+        // Create a minimal user profile from auth user data instead of failing
+        const fallbackProfile = {
+          name: authUser.name || authUser.email.split('@')[0] || 'User',
+          createdAt: new Date().toISOString(),
+          profilePicture: null
+        };
         
         set({
           isAuthenticated: true,
-          user: user as unknown as User,
+          user: {
+            $id: authUser.$id,
+            id: authUser.$id,
+            email: authUser.email,
+            name: fallbackProfile.name,
+            createdAt: fallbackProfile.createdAt,
+            avatar: null,
+            avatarFileId: null,
+          } as User,
+          lastPasswordLogin: new Date(),
         });
-        
-        // Obtain and cache Appwrite JWT for server API calls
-        try {
-          if (__DEV__) {
-            console.log('[Auth Store] Creating JWT token for server API calls');
-          }
-          
-          const jwt = await account.createJWT();
-          (global as any).__APPWRITE_JWT__ = jwt?.jwt;
-          
-          if (__DEV__) {
-            console.log('[Auth Store] JWT created successfully');
-          }
-          
-          // Seed demo transactions on login (idempotent if transactions exist)
-          try {
-            const { getApiBase } = require('@/lib/api');
-            const url = `${getApiBase()}/v1/dev/seed-transactions`;
-            if (jwt?.jwt) {
-              await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.jwt}` },
-                body: JSON.stringify({ count: 20, skipIfNotEmpty: true })
-              }).catch(() => {});
-            }
-          } catch {}
-        } catch (jwtError) {
-          console.error('[Auth Store] JWT creation failed:', jwtError);
-          
-          // Check if this is a scope error
-          if (jwtError instanceof Error && jwtError.message.includes('missing scope')) {
-            console.error('[Auth Store] Missing scope error detected - this indicates authentication configuration issues');
-            console.error('[Auth Store] Please verify Appwrite project settings and user permissions');
-          }
-          
-          (global as any).__APPWRITE_JWT__ = undefined;
-          // Don't throw here - the user is authenticated, just JWT creation failed
-          console.warn('[Auth Store] Continuing without JWT token');
-        }
       } else {
-        console.error('[Auth Store] No session returned from signIn');
-        throw new Error('Failed to create authentication session');
+        // Set authenticated state with full profile
+        set({
+          isAuthenticated: true,
+          user: {
+            $id: authUser.$id,
+            id: authUser.$id,
+            email: authUser.email,
+            name: userProfile.name,
+            createdAt: userProfile.createdAt,
+            avatar: userProfile.profilePicture?.url,
+            avatarFileId: userProfile.profilePicture?.id,
+          } as User,
+          lastPasswordLogin: new Date(),
+        });
+      }
+      
+      // Update password login timestamp for biometric security
+      await updateLastPasswordLogin();
+      
+      // Load biometric state after successful login
+      await get().loadBiometricState();
+      
+      // Load device tracking state after successful login
+      const { user } = get();
+      if (user) {
+        try {
+          await get().loadDeviceTrackingState(user.id);
+          await get().loadTrustedDevices();
+        } catch (deviceError) {
+          logger.warn('AUTH', 'Failed to load device tracking state after login:', deviceError);
+        }
+      }
+
+      // Create and store JWT for server API calls using enhanced session manager
+      try {
+        if (__DEV__) logger.info('AUTH', 'Creating JWT token for server API calls');
+        const jwt = await jwtSessionManager.createAndStoreToken();
+        if (__DEV__) logger.info('AUTH', 'JWT created and stored successfully', { hasJwt: !!jwt });
+
+        // seed demo transactions (fire-and-forget) if we have a valid token
+        if (jwt) {
+          try {
+            const apiMod = await import('@/lib/api');
+            const { getApiBase } = apiMod;
+            const url = `${getApiBase()}/v1/dev/seed-transactions`;
+            await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+              body: JSON.stringify({ count: 20, skipIfNotEmpty: true })
+            }).catch(() => {});
+          } catch {}
+        }
+      } catch (jwtError) {
+        logger.error('AUTH', 'JWT session manager failed', { error: jwtError, stack: (jwtError as any)?.stack });
+        logger.warn('AUTH', 'Continuing without JWT token');
+      }
+
+      // Clear login attempts on successful login
+      await loginAttemptsService.clearLoginAttempts(email);
+      set({ loginAttempts: null });
+      
+      if (__DEV__) {
+        logger.info('AUTH', 'Login completed successfully');
       }
     } catch (error: any) {
-      console.error('[Auth Store] Login error:', error);
+      logger.error('AUTH', 'Login error', error);
       
-      // Provide more specific error messages
-      let errorMessage = 'Authentication failed';
-      if (error.message) {
-        if (error.message.includes('Invalid credentials')) {
-          errorMessage = 'Invalid email or password. Please check your credentials.';
-        } else if (error.message.includes('User not found')) {
-          errorMessage = 'No account found with this email. Please sign up first.';
-        } else if (error.message.includes('missing scope')) {
-          errorMessage = 'Authentication system error. Please contact support.';
-        } else if (error.message.includes('too many requests')) {
-          errorMessage = 'Too many login attempts. Please wait before trying again.';
-        } else {
-          errorMessage = error.message;
-        }
-      }
-      
+      await jwtSessionManager.clearSession();
       set({
         isAuthenticated: false,
         user: null,
       });
-      (global as any).__APPWRITE_JWT__ = undefined;
       
-      const enhancedError = new Error(errorMessage);
-      enhancedError.stack = error.stack;
-      throw enhancedError;
+      // Record failed login attempt (unless it's already a lockout error)
+      if (!error.message?.includes('Account temporarily locked')) {
+        try {
+          const updatedAttemptStatus = await loginAttemptsService.recordFailedAttempt(email);
+          set({ loginAttempts: updatedAttemptStatus });
+          
+          // Update error message to include remaining attempts info
+          if (updatedAttemptStatus.isLocked) {
+            error.message = `Account temporarily locked due to too many failed attempts. Try again in ${loginAttemptsService.formatTimeRemaining(updatedAttemptStatus.lockoutTimeRemaining || 0)}.`;
+          } else if (updatedAttemptStatus.remainingAttempts > 0) {
+            const attemptsText = updatedAttemptStatus.remainingAttempts === 1 ? 'attempt' : 'attempts';
+            error.message = `${error.message} ${updatedAttemptStatus.remainingAttempts} ${attemptsText} remaining.`;
+          }
+        } catch (attemptError) {
+          logger.error('AUTH', 'Error recording failed login attempt:', attemptError);
+        }
+      }
+      
+      // Surface full error to structured logger
+      try {
+        logger.error('AUTH', 'Login error details:', { error, stack: (error as any)?.stack });
+      } catch {}
+
+      // Re-throw the error (Appwrite auth service already formats errors)
+      throw error;
     } finally {
       set({ isLoading: false });
     }
@@ -292,53 +595,58 @@ const useAuthStore = create<AuthState>((set) => ({
 
   /**
    * Logs out the current user
-   * Invalidates the session on Appwrite, expires tokens, and clears local authentication state
+   * Invalidates the session on Appwrite and clears local authentication state
    * Will clear local state even if the remote logout fails
    */
   logout: async () => {
     set({ isLoading: true });
     try {
       if (__DEV__) {
-        console.log('[Auth Store] Starting logout with token expiration');
+        logger.info('AUTH', 'Starting logout process');
       }
       
-      // signOut now handles complete token cleanup including expiration
-      await signOut();
+      // Logout using Appwrite auth service
+      await appwriteLogout();
+      
+      // Force clear auth cache to ensure no stale user data
+      const { forceClearUserCache } = await import('@/lib/appwrite/auth');
+      await forceClearUserCache();
       
       if (__DEV__) {
-        console.log('[Auth Store] Appwrite logout completed, clearing local state');
+        logger.info('AUTH', 'Appwrite logout completed, clearing local state');
       }
+      
+      // Clear all biometric data on logout
+      await clearAllBiometricData();
+      
+      // Clear device trust data for the user
+      const { user } = get();
+      if (user) {
+        try {
+          await clearTrustedDevicesForUser(user.id);
+        } catch (error) {
+          logger.warn('AUTH', 'Failed to clear trusted devices on logout:', error);
+        }
+      }
+      
+      // Clear JWT session
+      await jwtSessionManager.clearSession();
       
       set({
         isAuthenticated: false,
         user: null,
+        biometricEnabled: false,
+        biometricType: null,
+        lastPasswordLogin: null,
+        deviceTrackingState: null,
+        trustedDevices: [],
       });
       
       if (__DEV__) {
-        console.log('[Auth Store] Logout completed successfully');
+        logger.info('AUTH', 'Logout completed successfully');
       }
     } catch (error) {
-      console.error('[Auth Store] Logout error:', error);
-      
-      // Even if logout fails, perform emergency cleanup
-      try {
-        if (__DEV__) {
-          console.log('[Auth Store] Performing emergency token cleanup');
-        }
-        
-        // Import and use token manager for emergency cleanup
-        const { expireToken, clearTokenData } = await import('@/lib/tokenManager');
-        expireToken();
-        clearTokenData();
-        
-        if (__DEV__) {
-          console.log('[Auth Store] Emergency cleanup completed');
-        }
-      } catch (cleanupError) {
-        console.error('[Auth Store] Emergency cleanup failed:', cleanupError);
-        // Force clear the global JWT as last resort
-        (global as any).__APPWRITE_JWT__ = undefined;
-      }
+      logger.error('AUTH', 'Logout error', error);
       
       // Always clear local state, even on error
       set({
@@ -346,8 +654,8 @@ const useAuthStore = create<AuthState>((set) => ({
         user: null,
       });
     } finally {
-      // Ensure JWT is cleared (redundant but safe)
-      (global as any).__APPWRITE_JWT__ = undefined;
+      // Ensure JWT session is cleared on any error
+      await jwtSessionManager.clearSession();
       set({ isLoading: false });
     }
   },
@@ -368,37 +676,437 @@ const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true });
     
     try {
-      // Delete old profile picture if it exists
-      if (user.avatarFileId) {
-        try {
-          await deleteProfilePicture(user.avatarFileId);
-        } catch (error) {
-          console.log('Failed to delete old profile picture:', error);
-          // Don't throw here, continue with upload
-        }
-      }
-
-      // Upload new profile picture
-      const { fileId, fileUrl } = await uploadProfilePicture(imageUri, user.id);
+      // Update profile picture using Appwrite auth service
+      const updatedProfile = await updateProfilePicture(imageUri);
       
-      // Update user document with new avatar information
-      const updatedUser = await updateUserProfile(user.id, fileUrl, fileId);
+      // Update local state with new user data - avatar is now a string field
+      set({
+        user: {
+          ...user,
+          avatar: updatedProfile.avatar, // Direct string field
+          avatarFileId: updatedProfile.avatarFileId, // Separate field for file ID
+        } as User,
+      });
+      
+      logger.info('AUTH', 'Profile picture updated successfully', {
+        avatarUrl: updatedProfile.avatar,
+        fileId: updatedProfile.avatarFileId
+      });
+    } catch (error) {
+      logger.error('AUTH', 'Update profile picture error', error);
+      throw error;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+  
+  /**
+   * Updates the user's profile information
+   */
+  updateUserProfile: async (updates: { name?: string; phoneNumber?: string }) => {
+    const { user } = useAuthStore.getState();
+    
+    if (!user) {
+      throw new Error('No authenticated user found');
+    }
+
+    set({ isLoading: true });
+    
+    try {
+      // Update user profile using Appwrite auth service
+      const updatedProfile = await updateAppwriteUserProfile(updates);
       
       // Update local state with new user data
       set({
         user: {
           ...user,
-          avatar: fileUrl,
-          avatarFileId: fileId,
+          name: updatedProfile.name || user.name,
+          // Note: phoneNumber is not part of the User type, but it's stored in the database
+          // The User type might need to be extended if we want to display phone numbers
         } as User,
       });
       
-      console.log('Profile picture updated successfully');
+      logger.info('AUTH', 'User profile updated successfully');
     } catch (error) {
-      console.error('Update profile picture error:', error);
+      logger.error('AUTH', 'Update user profile error', error);
       throw error;
     } finally {
       set({ isLoading: false });
+    }
+  },
+  
+  /**
+   * Checks biometric availability and updates state
+   */
+  checkBiometricAvailability: async () => {
+    try {
+      const availability = await checkBiometricAvailability();
+      
+      if (availability.isAvailable) {
+        set({
+          biometricType: availability.biometricType,
+        });
+      } else {
+        set({
+          biometricType: null,
+          biometricEnabled: false,
+        });
+      }
+    } catch (error) {
+      logger.error('AUTH', 'Error checking biometric availability:', error);
+      set({
+        biometricType: null,
+        biometricEnabled: false,
+      });
+    }
+  },
+  
+  /**
+   * Sets up biometric authentication for the current user
+   */
+  setupBiometric: async (): Promise<BiometricAuthResult> => {
+    const { user } = get();
+    
+    if (!user) {
+      return {
+        success: false,
+        error: 'No authenticated user found',
+      };
+    }
+    
+    try {
+      const result = await setupBiometricAuthentication(user.id);
+      
+      if (result.success) {
+        // Update state to reflect biometric setup
+        await get().loadBiometricState();
+        logger.info('AUTH', 'Biometric authentication set up successfully');
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('AUTH', 'Error setting up biometric authentication:', error);
+      return {
+        success: false,
+        error: 'Failed to set up biometric authentication',
+      };
+    }
+  },
+  
+  /**
+   * Authenticates user with biometrics
+   */
+  authenticateWithBiometric: async (): Promise<BiometricAuthResult> => {
+    try {
+      // Check if there's already an active session before proceeding
+      try {
+        const currentUser = await getCurrentUser();
+        if (currentUser) {
+          logger.info('AUTH', 'User already has active session, biometric auth skipped');
+          set({
+            isAuthenticated: true,
+            user: {
+              $id: currentUser.$id,
+              id: currentUser.$id,
+              email: currentUser.email,
+              name: currentUser.name,
+              createdAt: currentUser.registration,
+              avatar: null,
+              avatarFileId: null,
+            } as User,
+          });
+          
+          return {
+            success: true,
+            biometricType: get().biometricType || 'fingerprint',
+            token: 'existing_session', // Indicate existing session was used
+          };
+        }
+      } catch (sessionError) {
+        logger.info('AUTH', 'No existing session found, proceeding with biometric auth');
+      }
+      
+      const result = await authenticateWithBiometrics();
+      
+      if (result.success && result.token) {
+        // Biometric authentication successful
+        // Update authentication state without triggering full login
+        const { user } = get();
+        if (user) {
+          set({
+            isAuthenticated: true,
+            // Don't update lastPasswordLogin for biometric auth
+          });
+          
+          logger.info('AUTH', 'Biometric authentication successful');
+        } else {
+          // If no user in state, try to get current user from session
+          try {
+            const currentUser = await getCurrentUser();
+            if (currentUser) {
+              set({
+                isAuthenticated: true,
+                user: {
+                  $id: currentUser.$id,
+                  id: currentUser.$id,
+                  email: currentUser.email,
+                  name: currentUser.name,
+                  createdAt: currentUser.registration,
+                  avatar: null,
+                  avatarFileId: null,
+                } as User,
+              });
+            }
+          } catch (userError) {
+            logger.warn('AUTH', 'Failed to get user after biometric auth', userError);
+          }
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('AUTH', 'Biometric authentication error:', error);
+      return {
+        success: false,
+        error: 'Biometric authentication failed',
+      };
+    }
+  },
+  
+  /**
+   * Disables biometric authentication for the current user
+   */
+  disableBiometric: async (): Promise<void> => {
+    try {
+      await disableBiometricAuthentication();
+      
+      set({
+        biometricEnabled: false,
+        biometricType: null,
+      });
+      
+      logger.info('AUTH', 'Biometric authentication disabled');
+    } catch (error) {
+      logger.error('AUTH', 'Error disabling biometric authentication:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Loads biometric state from storage
+   */
+  loadBiometricState: async (): Promise<void> => {
+    try {
+      const [isEnabled, biometricType] = await Promise.all([
+        isBiometricEnabled(),
+        getStoredBiometricType(),
+      ]);
+      
+      // Validate that biometric setup is still valid
+      const isValid = await validateBiometricSetup();
+      
+      set({
+        biometricEnabled: isEnabled && isValid,
+        biometricType: isValid ? biometricType : null,
+      });
+      
+      if (isEnabled && !isValid) {
+        logger.warn('AUTH', 'Biometric setup invalid, disabled biometric authentication');
+      }
+    } catch (error) {
+      logger.error('AUTH', 'Error loading biometric state:', error);
+      set({
+        biometricEnabled: false,
+        biometricType: null,
+      });
+    }
+  },
+  
+  /**
+   * Checks and loads current login attempt/lockout status for an email
+   * This ensures lockout state persists across app restarts and force-quits
+   */
+  checkLoginAttemptStatus: async (email: string): Promise<void> => {
+    if (!email?.trim()) {
+      set({ loginAttempts: null });
+      return;
+    }
+    
+    try {
+      const status = await loginAttemptsService.getCurrentLockoutStatus(email);
+      const attemptResult: LoginAttemptResult = {
+        isLocked: status.isLockedOut,
+        remainingAttempts: status.remainingAttempts,
+        lockoutTimeRemaining: status.timeLeftSeconds * 1000, // Convert to milliseconds
+        canAttempt: !status.isLockedOut,
+      };
+      
+      set({ loginAttempts: attemptResult });
+      
+      if (status.isLockedOut) {
+        logger.info('AUTH', 'Loaded lockout status from storage', {
+          email,
+          timeLeftSeconds: status.timeLeftSeconds,
+          attempts: status.attempts,
+        });
+      }
+    } catch (error) {
+      logger.error('AUTH', 'Error checking login attempt status:', error);
+      // On error, don't block user - set null state
+      set({ loginAttempts: null });
+    }
+  },
+  
+  /**
+   * Attempts auto-login for trusted device if eligible
+   */
+  attemptAutoLogin: async (email: string): Promise<AutoLoginResult> => {
+    const { user } = get();
+    const userId = user?.id || email; // Use current user ID or fallback to email
+    
+    try {
+      return await attemptAutoLogin(userId);
+    } catch (error) {
+      logger.error('AUTH', 'Auto-login attempt failed:', error);
+      return {
+        success: false,
+        skipped: false,
+        reason: 'Auto-login error occurred',
+      };
+    }
+  },
+  
+  /**
+   * Adds current device to trusted devices list
+   */
+  addDeviceToTrusted: async (): Promise<void> => {
+    const { user, biometricType } = get();
+    
+    if (!user) {
+      throw new Error('No authenticated user found');
+    }
+    
+    try {
+      await addCurrentDeviceToTrusted(user.id, biometricType || 'unknown');
+      
+      // Reload trusted devices and tracking state
+      await get().loadTrustedDevices();
+      await get().loadDeviceTrackingState(user.id);
+      
+      logger.info('AUTH', 'Device added to trusted list');
+    } catch (error) {
+      logger.error('AUTH', 'Failed to add device to trusted list:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Removes current device from trusted devices list
+   */
+  removeDeviceFromTrusted: async (): Promise<void> => {
+    const { user } = get();
+    
+    if (!user) {
+      throw new Error('No authenticated user found');
+    }
+    
+    try {
+      await removeCurrentDeviceFromTrusted(user.id);
+      
+      // Reload trusted devices and tracking state
+      await get().loadTrustedDevices();
+      await get().loadDeviceTrackingState(user.id);
+      
+      logger.info('AUTH', 'Device removed from trusted list');
+    } catch (error) {
+      logger.error('AUTH', 'Failed to remove device from trusted list:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Loads device tracking state for current user
+   */
+  loadDeviceTrackingState: async (userId: string): Promise<void> => {
+    try {
+      const trackingState = await shouldAttemptAutoLogin(userId);
+      set({ deviceTrackingState: trackingState });
+      
+      logger.info('AUTH', 'Device tracking state loaded:', {
+        canAutoLogin: trackingState.canAutoLogin,
+        trustLevel: trackingState.trustLevel,
+        isDeviceTrusted: trackingState.isDeviceTrusted,
+      });
+    } catch (error) {
+      logger.error('AUTH', 'Failed to load device tracking state:', error);
+      set({ deviceTrackingState: null });
+    }
+  },
+  
+  /**
+   * Loads trusted devices list for current user
+   */
+  loadTrustedDevices: async (): Promise<void> => {
+    const { user } = get();
+    
+    if (!user) {
+      set({ trustedDevices: [] });
+      return;
+    }
+    
+    try {
+      const devices = await getTrustedDevicesForUser(user.id);
+      set({ trustedDevices: devices });
+      
+      logger.info('AUTH', `Loaded ${devices.length} trusted devices`);
+    } catch (error) {
+      logger.error('AUTH', 'Failed to load trusted devices:', error);
+      set({ trustedDevices: [] });
+    }
+  },
+  
+  /**
+   * Enables or disables device trust feature
+   */
+  setDeviceTrustEnabled: async (enabled: boolean): Promise<void> => {
+    try {
+      await setDeviceTrustEnabled(enabled);
+      
+      // Reload state after changing settings
+      const { user } = get();
+      if (user) {
+        await get().loadDeviceTrackingState(user.id);
+        await get().loadTrustedDevices();
+      }
+      
+      logger.info('AUTH', `Device trust ${enabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      logger.error('AUTH', 'Failed to toggle device trust feature:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Removes a specific trusted device
+   */
+  removeTrustedDevice: async (deviceId: string): Promise<void> => {
+    const { user } = get();
+    
+    if (!user) {
+      throw new Error('No authenticated user found');
+    }
+    
+    try {
+      await removeTrustedDevice(deviceId, user.id);
+      
+      // Reload trusted devices and tracking state
+      await get().loadTrustedDevices();
+      await get().loadDeviceTrackingState(user.id);
+      
+      logger.info('AUTH', 'Trusted device removed:', { deviceId });
+    } catch (error) {
+      logger.error('AUTH', 'Failed to remove trusted device:', error);
+      throw error;
     }
   },
 }));

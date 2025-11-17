@@ -1,4 +1,6 @@
-import { Filter, ArrowDownLeft, ArrowUpRight, User, CreditCard as CardIcon, CreditCard } from "lucide-react-native";
+import { logger } from '@/lib/logger';
+import { Filter, ArrowDownLeft, ArrowUpRight, User, CreditCard as CardIcon, CreditCard, RefreshCw } from "lucide-react-native";
+import { MaterialIcons } from '@expo/vector-icons';
 import React, { useMemo, useState } from "react";
 import { 
 	KeyboardAvoidingView,
@@ -16,53 +18,46 @@ import ActivityLogItem from "@/components/activity/ActivityLogItem";
 import ActivityDetailModal from "@/components/activity/ActivityDetailModal";
 import { ClearDataModal } from "@/components/ClearDataModal";
 import { useTheme } from "@/context/ThemeContext";
+import { useAlert } from "@/context/AlertContext";
+import { useBiometricToast } from "@/context/BiometricToastContext";
 import CustomButton from "@/components/CustomButton";
 import { getBadgeVisuals } from "@/theme/badge-utils";
 import { TransactionItem } from "@/components/TransactionItem";
 import { useApp } from "@/context/AppContext";
 import { ActivityEvent } from "@/types/activity";
+import { Transaction } from "@/constants/index";
+import { activityService } from '@/lib/appwrite';
+import { activityLogger } from '@/lib/activityLogger';
+import LoadingAnimation from '@/components/LoadingAnimation';
+import { useLoading, LOADING_CONFIGS } from '@/hooks/useLoading';
+import { getApiBase } from '@/lib/api';
+import { useFocusEffect } from '@react-navigation/native';
 
 type Payment = { id: string; status: string; amount?: number; currency?: string; created?: string };
 
 export default function ActivityScreen() {
 
-	const handleCapture = async (id: string) => {
-		try {
-			const { getApiBase } = require('@/lib/api');
-			const apiBase = getApiBase();
-			const url = `${apiBase.replace(/\/$/, "")}/v1/payments/${id}/capture`;
-			const jwt = (global as any).__APPWRITE_JWT__ || undefined;
-			const headers: any = {};
-			if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-			const res = await fetch(url, { method: 'POST', headers });
-			const data = await res.json();
-			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-			setPayments((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'captured' } : p)));
-		} catch (e) {}
-	};
-
-	const handleRefund = async (id: string) => {
-		try {
-			const { getApiBase } = require('@/lib/api');
-			const apiBase = getApiBase();
-			const url = `${apiBase.replace(/\/$/, "")}/v1/payments/${id}/refund`;
-			const jwt = (global as any).__APPWRITE_JWT__ || undefined;
-			const headers: any = {};
-			if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-			const res = await fetch(url, { method: 'POST', headers });
-			const data = await res.json();
-			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-			setPayments((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'refunded' } : p)));
-		} catch (e) {}
-	};
-	const { transactions, activity, clearAllActivity } = useApp();
-	const { getApiBase } = require('@/lib/api');
+	const { transactions, activity, clearAllActivity, deleteActivity } = useApp();
+	const { showAlert } = useAlert();
+	const { showSuccess, showError } = useBiometricToast();
+	const { loading, withLoading, showLoading, hideLoading } = useLoading();
+	
+	// State for centralized activities from activityLogger
+	const [centralizedActivities, setCentralizedActivities] = React.useState<any[]>([]);
+	
+	// No mock data - use real data only
+	const [suppressAllLogs, setSuppressAllLogs] = useState(false);
+	const [activitySuppressed, setActivitySuppressed] = useState(false);
 	const [payments, setPayments] = React.useState<Payment[]>([]);
-	const [loading, setLoading] = React.useState(false);
 	const [loadingMore, setLoadingMore] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
 	const [showClearActivity, setShowClearActivity] = React.useState(false);
 	const [isClearingActivity, setIsClearingActivity] = React.useState(false);
+	
+	// Auto-refresh state
+	const [autoRefreshEnabled, setAutoRefreshEnabled] = React.useState(true);
+	const [lastRefreshTime, setLastRefreshTime] = React.useState<Date>(new Date());
+	const refreshIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
 	const PAY_PAGE_SIZE = 10;
 	const [nextPaymentsCursor, setNextPaymentsCursor] = React.useState<string | null>(null);
 
@@ -74,77 +69,115 @@ export default function ActivityScreen() {
 		reversed: 'refunded',
 	};
 
-	const buildPaymentsQuery = (limit: number, cursor?: string) => {
-		const apiBase = getApiBase();
-		const types = Object.keys(typeFilter).filter((k) => (typeFilter as any)[k]);
-		const statuses = Object.keys(statusFilter)
-			.filter((k) => (statusFilter as any)[k])
-			.map((k) => paymentStatusMap[k] || '')
-			.filter(Boolean);
-		const params = new URLSearchParams();
-		params.set('limit', String(limit));
-		if (types.length) params.set('type', types.join(','));
-		if (statuses.length) params.set('status', statuses.join(','));
-		if (cursor) params.set('cursor', cursor);
-		return `${apiBase.replace(/\/$/, "")}/v1/payments?${params.toString()}`;
-	};
+    
 
-	const fetchPayments = async (reset: boolean) => {
+    
+
+	// Function to load centralized activities
+	const loadCentralizedActivities = async (showLogs = true) => {
 		try {
-			if (reset) {
-				setLoading(true);
-				setPayments([]);
-				setNextPaymentsCursor(null);
+			const activities = await activityLogger.getActivities({ limit: 100 });
+			setCentralizedActivities(activities);
+			if (showLogs) {
+				logger.info('ACTIVITY', 'Loaded centralized activities', { count: activities.length });
 			}
-			const jwt = (global as any).__APPWRITE_JWT__ || undefined;
-			const url = buildPaymentsQuery(PAY_PAGE_SIZE);
-			const res = await fetch(url, { headers: { ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) } });
-			const data = await res.json();
-			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-			const list: Payment[] = Array.isArray(data?.data) ? data.data : [];
-			setPayments(list);
-			setNextPaymentsCursor(data?.nextCursor ?? null);
-		} catch (e: any) {
-			setError(e?.message || "Failed to load payments");
-		} finally {
-			if (reset) setLoading(false);
+		} catch (error) {
+			logger.error('ACTIVITY', 'Failed to load centralized activities:', error);
 		}
 	};
 
+	// Refresh activities (called when user navigates to screen)
+	const refreshActivities = async (showLogs: boolean = false) => {
+		if (showLogs) {
+			logger.info('ACTIVITY', 'Refreshing activities manually');
+		}
+		await loadCentralizedActivities(showLogs);
+		setLastRefreshTime(new Date());
+		// Note: fetchPayments will be called later, we just refresh centralized activities here
+	};
+	
+	// Auto-refresh function
+	const performAutoRefresh = React.useCallback(async () => {
+		if (!autoRefreshEnabled) return;
+		
+		try {
+			logger.info('ACTIVITY', 'Auto-refreshing activity data');
+			await loadCentralizedActivities(false);
+			// Also refresh payments to ensure consistency
+			await fetchPayments(false);
+			setLastRefreshTime(new Date());
+		} catch (error) {
+			logger.error('ACTIVITY', 'Auto-refresh failed:', error);
+		}
+	}, [autoRefreshEnabled]);
+	
+	// Setup auto-refresh timer
+	const setupAutoRefresh = React.useCallback(() => {
+		if (refreshIntervalRef.current) {
+			clearInterval(refreshIntervalRef.current);
+		}
+		
+		if (autoRefreshEnabled) {
+			refreshIntervalRef.current = setInterval(performAutoRefresh, 30000); // Refresh every 30 seconds
+			logger.info('ACTIVITY', 'Auto-refresh enabled: 30-second interval');
+		} else {
+			logger.info('ACTIVITY', 'Auto-refresh disabled');
+		}
+	}, [autoRefreshEnabled, performAutoRefresh]);
+	
+	// Cleanup auto-refresh on unmount
 	React.useEffect(() => {
-		fetchPayments(true);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [typeFilter, statusFilter]);
+		return () => {
+			if (refreshIntervalRef.current) {
+				clearInterval(refreshIntervalRef.current);
+				refreshIntervalRef.current = null;
+			}
+		};
+	}, []);
+	
+	// Toggle auto-refresh
+	const toggleAutoRefresh = () => {
+		setAutoRefreshEnabled(prev => {
+			const newState = !prev;
+			logger.info('ACTIVITY', 'Auto-refresh toggled:', newState ? 'enabled' : 'disabled');
+			return newState;
+		});
+	};
+	
+	// Setup auto-refresh whenever the enabled state changes
+	React.useEffect(() => {
+		setupAutoRefresh();
+	}, [setupAutoRefresh]);
 
 	React.useEffect(() => {
-		// initial load
-		fetchPayments(true);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
+		// Check if activity was manually cleared and suppress if needed
+		(async () => {
+			try {
+				const activityClearedFlag = await AsyncStorage.getItem('activity_manually_cleared');
+				if (activityClearedFlag) {
+					logger.info('UI', 'Activity is suppressed, hiding logs');
+					setActivitySuppressed(true);
+					setSuppressAllLogs(true);
+				}
+			} catch (error) {
+				logger.error('UI', 'Failed to check activity suppression flag:', error);
+			}
+		})();
+
+		// Load centralized activities
+		loadCentralizedActivities();
+
+		// initial load will be triggered by fetchPayments below
 	}, []);
 
-	const loadMorePayments = async () => {
-		if (!nextPaymentsCursor || loadingMore) return;
-		try {
-			setLoadingMore(true);
-			const jwt = (global as any).__APPWRITE_JWT__ || undefined;
-			const url = buildPaymentsQuery(PAY_PAGE_SIZE, nextPaymentsCursor);
-			const res = await fetch(url, { headers: { ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) } });
-			const data = await res.json();
-			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-			const list: Payment[] = Array.isArray(data?.data) ? data.data : [];
-			setPayments(prev => {
-				const seen = new Set(prev.map(p => p.id));
-				const merged = [...prev];
-				for (const item of list) if (!seen.has(item.id)) merged.push(item);
-				return merged;
-			});
-			setNextPaymentsCursor(data?.nextCursor ?? null);
-		} catch (e: any) {
-			setError(e?.message || "Failed to load more payments");
-		} finally {
-			setLoadingMore(false);
-		}
-	};
+	// Refresh activities when screen comes into focus
+	useFocusEffect(
+		React.useCallback(() => {
+			refreshActivities();
+		}, [])
+	);
+
+    
 	const { colors } = useTheme();
 	const [showDateFilter, setShowDateFilter] = useState(false);
 	const [dateFilter, setDateFilter] = useState("all");
@@ -196,15 +229,7 @@ export default function ActivityScreen() {
 		});
 	};
 
-	const toggleType = (key: keyof typeof typeFilter) => {
-		setTypeFilter(prev => {
-			const next = { ...prev, [key]: !prev[key] };
-			if (!next.deposit && !next.transfer && !next.withdraw && !next.payment) {
-				return prev;
-			}
-			return next;
-		});
-	};
+	// toggleType removed (not used) to satisfy linter
 
 	const toggleStatus = (key: keyof typeof statusFilter) => {
 		setStatusFilter(prev => {
@@ -220,21 +245,201 @@ export default function ActivityScreen() {
 	const setAllOn = () => setFilters({ income: true, expense: true, account: true, card: true });
 
 	const handleClearActivity = async () => {
-		setIsClearingActivity(true);
 		try {
-			await clearAllActivity();
 			setShowClearActivity(false);
+			
+			// Use withLoading to handle the loading state properly
+			await withLoading(async () => {
+				try {
+					logger.info('ACTIVITY', 'Starting clear all activity operation...');
+					
+					// Clear activity data
+					await clearAllActivity();
+					
+					// Also suppress any locally loaded logs (payments/transactions) for this session
+					setPayments([]);
+					setSuppressAllLogs(true);
+					setActivitySuppressed(true);
+					
+					// Clear centralized activities as well
+					setCentralizedActivities([]);
+					
+					logger.info('ACTIVITY', 'Activity cleared successfully');
+				} catch (innerError) {
+					logger.error('ACTIVITY', 'Error during clear operation:', innerError);
+					throw innerError; // Re-throw to be caught by outer catch
+				}
+			}, LOADING_CONFIGS.SYNC_DATA);
+			
+			// Show success toast notification
+			showSuccess('Activity Cleared', 'All activity has been cleared from this session.');
+			showAlert('success', 'All activity has been cleared from this session.', 'Activity Cleared');
+			
 		} catch (error) {
-			console.error('Failed to clear activity:', error);
-		} finally {
-			setIsClearingActivity(false);
+			logger.error('ACTIVITY', 'Failed to clear activity:', error);
+			showError('Clear Failed', 'Failed to clear activity. Please try again.');
+			showAlert('error', 'Failed to clear activity. Please try again.', 'Clear Failed');
 		}
 	};
 
-	const getFilteredTransactions = () => {
-		if (!Array.isArray(transactions)) return [];
+	const handleCancelClearActivity = () => {
+		setShowClearActivity(false);
+	};
 
-		let filtered = [...transactions];
+	const handleRestoreActivity = async () => {
+		try {
+			logger.info('UI', 'Restoring activity after clear');
+
+			// Remove suppression flag
+			await AsyncStorage.removeItem('activity_manually_cleared');
+			setSuppressAllLogs(false);
+			setActivitySuppressed(false);
+
+			// Reload payments and activities
+			await fetchPayments(true);
+			await refreshActivities();
+			
+			logger.info('UI', 'Activity restored successfully');
+			showAlert('success', 'Activity has been restored successfully.', 'Activity Restored');
+		} catch (error) {
+			logger.error('UI', 'Failed to restore activity:', error);
+			showAlert('error', 'Failed to restore activity. Please try again.', 'Restore Failed');
+		}
+	};
+
+
+	const buildPaymentsQuery = (limit: number, cursor?: string) => {
+		const apiBase = getApiBase();
+		const types = Object.keys(typeFilter).filter((k) => (typeFilter as any)[k]);
+		const statuses = Object.keys(statusFilter)
+			.filter((k) => (statusFilter as any)[k])
+			.map((k) => paymentStatusMap[k] || '')
+			.filter(Boolean);
+		const params = new URLSearchParams();
+		params.set('limit', String(limit));
+		if (types.length) params.set('type', types.join(','));
+		if (statuses.length) params.set('status', statuses.join(','));
+		if (cursor) params.set('cursor', cursor);
+		return `${apiBase.replace(/\/$/, "")}/v1/payments?${params.toString()}`;
+	};
+
+	const fetchPayments = async (reset: boolean) => {
+		try {
+			if (reset) {
+				showLoading();
+				setPayments([]);
+				setNextPaymentsCursor(null);
+			}
+			const url = buildPaymentsQuery(PAY_PAGE_SIZE);
+			const res = await fetch(url, { headers: {} });
+			
+			// Handle authentication errors gracefully
+			if (res.status === 401) {
+				logger.warn('ACTIVITY', 'Authentication failed, clearing payment data');
+				setPayments([]);
+				return; // Don't throw error for auth issues, just show empty state
+			}
+			
+			const data = await res.json();
+			if (!res.ok) {
+				// Handle 404 or API not available gracefully
+				if (res.status === 404) {
+					logger.info('ACTIVITY', 'Payments API not available, showing empty state');
+					setPayments([]);
+					return;
+				}
+				throw new Error(data?.error || `HTTP ${res.status}`);
+			}
+			const list: Payment[] = Array.isArray(data?.data) ? data.data : [];
+			setPayments(list);
+			setNextPaymentsCursor(data?.nextCursor ?? null);
+		} catch (e: any) {
+			// Only log as warning instead of error for common cases
+			if (e?.message?.includes('Failed to fetch') || e?.message?.includes('Network')) {
+				logger.warn('ACTIVITY', 'Network error loading payments:', e.message);
+			} else {
+				logger.error('ACTIVITY', 'Error loading payments:', e.message);
+			}
+			// Don't set error state for auth/network issues - just show empty state
+			setPayments([]);
+		} finally {
+			if (reset) hideLoading();
+		}
+	};
+
+	const loadMorePayments = async () => {
+		if (!nextPaymentsCursor || loadingMore) return;
+		try {
+			setLoadingMore(true);
+			const url = buildPaymentsQuery(PAY_PAGE_SIZE, nextPaymentsCursor);
+			const res = await fetch(url, { headers: {} });
+			
+			// Handle authentication errors gracefully
+			if (res.status === 401) {
+				logger.warn('ACTIVITY', 'Authentication failed while loading more payments');
+				return; // Stop loading more if auth fails
+			}
+			
+			const data = await res.json();
+			if (!res.ok) {
+				if (res.status === 404) {
+					logger.info('ACTIVITY', 'No more payments available');
+					return;
+				}
+				throw new Error(data?.error || `HTTP ${res.status}`);
+			}
+			const list: Payment[] = Array.isArray(data?.data) ? data.data : [];
+			setPayments(prev => {
+				const seen = new Set(prev.map(p => p.id));
+				const merged = [...prev];
+				for (const item of list) if (!seen.has(item.id)) merged.push(item);
+				return merged;
+			});
+			setNextPaymentsCursor(data?.nextCursor ?? null);
+		} catch (e: any) {
+			logger.warn('ACTIVITY', 'Failed to load more payments:', e.message);
+			// Don't show error message to user for load more failures
+		} finally {
+			setLoadingMore(false);
+		}
+	};
+
+	const handleCapture = async (id: string) => {
+		try {
+		const apiBase = getApiBase();
+		const url = `${apiBase.replace(/\/$/, "")}/v1/payments/${id}/capture`;
+		const res = await fetch(url, { method: 'POST', headers: {} });
+			const data = await res.json();
+			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+			setPayments((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'captured' } : p)));
+		} catch {
+			// ignore
+		}
+	};
+
+	const handleRefund = async (id: string) => {
+		try {
+		const apiBase = getApiBase();
+		const url = `${apiBase.replace(/\/$/, "")}/v1/payments/${id}/refund`;
+		const res = await fetch(url, { method: 'POST', headers: {} });
+			const data = await res.json();
+			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+			setPayments((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'refunded' } : p)));
+		} catch {
+			// ignore
+		}
+	};
+
+	React.useEffect(() => {
+		fetchPayments(true);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [typeFilter, statusFilter]);
+	const getFilteredTransactions = () => {
+		// Use only real transaction data, no mock fallback
+		const sourceTransactions = Array.isArray(transactions) ? transactions : [];
+		if (!Array.isArray(sourceTransactions)) return [];
+
+		let filtered = [...sourceTransactions];
 
 		// Apply date filter first
 		const now = new Date();
@@ -276,7 +481,9 @@ export default function ActivityScreen() {
 	};
 
 	const activityCards = useMemo(() => {
-		const events: ActivityEvent[] = activity.filter((evt) => {
+		// Use only real activity data, no mock fallback
+		const sourceActivity = Array.isArray(activity) ? activity : [];
+		const events: ActivityEvent[] = sourceActivity.filter((evt) => {
 			// Apply category filters
 			if (evt.category === 'transaction') {
 				const amt = typeof evt.amount === 'number' ? evt.amount : 0;
@@ -325,31 +532,52 @@ export default function ActivityScreen() {
 
 	// Create unified, deduplicated activity list
 	const allActivities = useMemo(() => {
-		const items: Array<{
+		if (suppressAllLogs) return [];
+		const items: {
 			id: string;
-			type: 'activity' | 'transaction' | 'payment';
+			type: 'activity' | 'transaction' | 'payment' | 'centralized';
 			timestamp: string;
 			data: any;
-		}> = [];
+		}[] = [];
 
-		// Add activity cards
-		activityCards.forEach(evt => {
+		// Add centralized activities from activityLogger (highest priority)
+		centralizedActivities.forEach(activity => {
 			items.push({
-				id: `activity_${evt.id}`,
-				type: 'activity',
-				timestamp: evt.timestamp,
-				data: evt
+				id: `centralized_${activity.id}`,
+				type: 'centralized',
+				timestamp: activity.timestamp,
+				data: activity
 			});
 		});
 
-		// Add filtered transactions (only if not already represented in activity)
+		// Add activity cards (legacy system - lower priority)
+		activityCards.forEach(evt => {
+			// Don't add if we already have this from centralized activities
+			const alreadyExists = items.some(item => 
+				item.type === 'centralized' && 
+				(item.data.transactionId === evt.transactionId || item.data.cardId === evt.cardId)
+			);
+			if (!alreadyExists) {
+				items.push({
+					id: `activity_${evt.id}`,
+					type: 'activity',
+					timestamp: evt.timestamp,
+					data: evt
+				});
+			}
+		});
+
+		// Add filtered transactions from real data only (only if not already represented)
 		filteredTransactions.forEach(tx => {
-			// Check if this transaction is already represented in activity
+			// Check if this transaction is already represented in centralized activities
+			const hasInCentralized = items.some(item => 
+				item.type === 'centralized' && item.data.transactionId === tx.id
+			);
 			const hasActivity = activityCards.some(evt => 
 				evt.transactionId === tx.id || 
 				(evt.category === 'transaction' && evt.title.includes(tx.description))
 			);
-			if (!hasActivity) {
+			if (!hasInCentralized && !hasActivity) {
 				items.push({
 					id: `transaction_${tx.id}`,
 					type: 'transaction',
@@ -361,13 +589,16 @@ export default function ActivityScreen() {
 
 		// Add payments (only if not already represented in activity or transactions)
 		payments.forEach(payment => {
+			const hasInCentralized = items.some(item => 
+				item.type === 'centralized' && item.data.transactionId === payment.id
+			);
 			const hasActivity = activityCards.some(evt => 
 				evt.transactionId === payment.id ||
 				(evt.type && evt.type.includes('payment') && evt.title.includes(payment.id.slice(-6)))
 			);
 			const hasTransaction = filteredTransactions.some(tx => tx.id === payment.id);
 			
-			if (!hasActivity && !hasTransaction) {
+			if (!hasInCentralized && !hasActivity && !hasTransaction) {
 				items.push({
 					id: `payment_${payment.id}`,
 					type: 'payment',
@@ -385,7 +616,7 @@ export default function ActivityScreen() {
 		return uniqueItems.sort((a, b) => 
 			new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
 		);
-	}, [activityCards, filteredTransactions, payments]);
+	}, [activityCards, filteredTransactions, payments, suppressAllLogs, centralizedActivities]);
 
 	return (
 		<SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -395,7 +626,23 @@ export default function ActivityScreen() {
 			>
 				<View style={styles.header}>
 					<Text style={[styles.title, { color: colors.textPrimary }]}>Activity</Text>
-					<View style={{ flexDirection: 'row', alignItems: 'center' }}>
+					<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+						{/* Auto-refresh toggle */}
+						<TouchableOpacity
+							style={[styles.filterButton, { 
+								backgroundColor: autoRefreshEnabled ? colors.tintPrimary : colors.card,
+								borderWidth: 1,
+								borderColor: autoRefreshEnabled ? colors.tintPrimary : colors.border
+							}]}
+							onPress={toggleAutoRefresh}
+						>
+							<RefreshCw 
+								color={autoRefreshEnabled ? '#fff' : colors.textSecondary} 
+								size={18} 
+							/>
+						</TouchableOpacity>
+						
+						{/* Filter button */}
 						<TouchableOpacity
 							style={[styles.filterButton, { backgroundColor: colors.card }]}
 							onPress={() => setShowDateFilter(true)}
@@ -549,6 +796,33 @@ export default function ActivityScreen() {
 					</ScrollView>
 				</View>
 				</View>
+				
+				{/* Auto-refresh status */}
+				{autoRefreshEnabled && (
+					<View style={{ 
+						flexDirection: 'row', 
+						alignItems: 'center', 
+						justifyContent: 'center', 
+						paddingHorizontal: 16, 
+						paddingVertical: 8,
+						marginBottom: 8
+					}}>
+						<View style={{
+							width: 6,
+							height: 6,
+							borderRadius: 3,
+							backgroundColor: colors.tintPrimary,
+							marginRight: 6
+						}} />
+						<Text style={{ 
+							color: colors.textSecondary, 
+							fontSize: 12, 
+							fontWeight: '500'
+						}}>
+							Auto-refresh enabled • Last: {lastRefreshTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+						</Text>
+					</View>
+				)}
 
 				<View style={[styles.transactionsContainer, { backgroundColor: colors.background }]}>
 					{/* Sticky Header with Clear All Button */}
@@ -556,9 +830,9 @@ export default function ActivityScreen() {
 						{/* Horizontal separator bar */}
 						<View style={[styles.horizontalBar, { backgroundColor: colors.border }]} />
 						
-						{/* Clear All Button */}
-						{activity.length > 0 && (
-							<View style={styles.clearAllContainer}>
+					{/* Clear All Button */}
+					{(!suppressAllLogs && (allActivities.length > 0 || activity.length > 0 || payments.length > 0 || centralizedActivities.length > 0)) && (
+						<View style={styles.clearAllContainer}>
 								<TouchableOpacity onPress={() => setShowClearActivity(true)}>
 									<Text style={[styles.clearAllText, { color: colors.negative }]}>Clear All</Text>
 								</TouchableOpacity>
@@ -576,18 +850,41 @@ export default function ActivityScreen() {
 						indicatorStyle="default"
 					>
 						{/* Empty state when there are no activities */}
-						{!loading && !error && allActivities.length === 0 && (
+						{!loading.visible && !error && allActivities.length === 0 && (
 							<View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 48 }}>
-								<Text style={{ fontSize: 18, fontWeight: '700', color: colors.textPrimary }}>No activities yet</Text>
-								<Text style={{ marginTop: 8, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 32 }}>
-									Once you add cards, make payments, or perform transfers, your activity will appear here.
+								<MaterialIcons name="timeline" size={64} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+								<Text style={{ fontSize: 18, fontWeight: '700', color: colors.textPrimary }}>
+									{activitySuppressed ? 'Activity cleared' : 'No activities yet'}
 								</Text>
+								<Text style={{ marginTop: 8, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 32 }}>
+									{activitySuppressed 
+										? 'Your activity history has been cleared from this session.'
+										: 'Start using your cards to see transactions, transfers and other activities here.'
+									}
+								</Text>
+								{activitySuppressed && (
+									<TouchableOpacity 
+										onPress={handleRestoreActivity}
+										style={{ 
+											marginTop: 12, 
+											paddingVertical: 8, 
+											paddingHorizontal: 16, 
+											backgroundColor: colors.tintPrimary, 
+											borderRadius: 8 
+										}}
+									>
+										<Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Restore Activity</Text>
+									</TouchableOpacity>
+								)}
 							</View>
 						)}
 
 						{/* Loading and Error states */}
-						{loading && (
-							<Text style={{ padding: 16, color: colors.textSecondary }}>Loading activities…</Text>
+						{loading.visible && (
+							<View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
+								<MaterialIcons name="hourglass-empty" size={32} color={colors.textSecondary} />
+								<Text style={{ padding: 16, color: colors.textSecondary, textAlign: 'center' }}>Loading activities…</Text>
+							</View>
 						)}
 						{error && (
 							<Text style={{ padding: 16, color: colors.negative }}>{error}</Text>
@@ -600,6 +897,38 @@ export default function ActivityScreen() {
 									<ActivityLogItem 
 										key={item.id} 
 										event={item.data} 
+										themeColors={colors} 
+										onPress={(e) => { setSelected(e); setShowDetail(true); }} 
+									/>
+								);
+							} else if (item.type === 'centralized') {
+				// Convert centralized activity to ActivityEvent format for ActivityLogItem
+				const centralizedEvent = {
+					id: item.data.id,
+					category: item.data.category,
+					type: item.data.type,
+					title: item.data.title,
+					subtitle: item.data.subtitle,
+					description: item.data.description,
+					amount: item.data.amount,
+					currency: item.data.currency,
+					status: item.data.status,
+					timestamp: item.data.timestamp,
+					cardId: item.data.cardId,
+					transactionId: item.data.transactionId,
+					tags: item.data.tags,
+					userId: item.data.userId,
+					source: item.data.source,
+					severity: item.data.severity,
+					metadata: item.data.metadata,
+					// Extract mobile fields from metadata for easier access
+					mobileNumber: item.data.metadata?.mobileNumber,
+					mobileNetwork: item.data.metadata?.mobileNetwork
+				};
+								return (
+									<ActivityLogItem 
+										key={item.id} 
+										event={centralizedEvent} 
 										themeColors={colors} 
 										onPress={(e) => { setSelected(e); setShowDetail(true); }} 
 									/>
@@ -658,15 +987,52 @@ export default function ActivityScreen() {
 					onFilterSelect={setDateFilter}
 				/>
 
-				<ActivityDetailModal visible={showDetail} event={selected} onClose={() => setShowDetail(false)} />
+				<ActivityDetailModal 
+					visible={showDetail} 
+					event={selected} 
+					onClose={() => setShowDetail(false)}
+					onDelete={async (deletedEvent) => {
+						try {
+							// Use AppContext's deleteActivity for enhanced deletion with database cleanup
+							const result = await deleteActivity(deletedEvent.id);
+							
+							if (result.success) {
+								// Remove from local centralized activities state
+								setCentralizedActivities(prev => 
+									prev.filter(activity => activity.id !== deletedEvent.id)
+								);
+								// Refresh the activity list to ensure consistency
+								loadCentralizedActivities(false);
+								
+								showSuccess('Activity Deleted', 'Activity has been deleted successfully.');
+							} else {
+								showError('Delete Failed', result.error || 'Failed to delete activity.');
+							}
+						} catch (error) {
+							logger.error('ACTIVITY', 'Error deleting activity from modal:', error);
+							showError('Delete Failed', 'An unexpected error occurred while deleting the activity.');
+						}
+					}}
+				/>
 
 				<ClearDataModal
 					visible={showClearActivity}
-					onClose={() => setShowClearActivity(false)}
+					onClose={handleCancelClearActivity}
 					onConfirm={handleClearActivity}
+					onRestore={handleRestoreActivity}
 					dataType="activity"
-					count={activity.length}
-					isLoading={isClearingActivity}
+					count={activity.length + centralizedActivities.length + payments.length}
+					isLoading={false}
+					useDelayedDeletion={true}
+					delayMinutes={2}
+				/>
+				
+				<LoadingAnimation
+					visible={loading.visible}
+					message={loading.message}
+					subtitle={loading.subtitle}
+					type={loading.type}
+					size={loading.size}
 				/>
 			</KeyboardAvoidingView>
 		</SafeAreaView>
@@ -785,6 +1151,7 @@ const styles = StyleSheet.create({
 		marginTop: 12,
 		marginBottom: 8,
 	},
+
 	transactionsList: {
 		flex: 1,
 	},

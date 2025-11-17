@@ -227,3 +227,41 @@ export const getPasswordStrength = (score: number): PasswordStrength => {
   
   return { score, level, color };
 };
+
+/**
+ * Update password strength function that combines calculation and strength mapping
+ */
+export const updatePasswordStrength = (password: string): PasswordStrength => {
+  const score = calculatePasswordStrength(password);
+  return getPasswordStrength(score);
+};
+
+/**
+ * Create initial validation state
+ */
+export const createInitialValidationState = (): ValidationState => ({
+  isValid: false,
+  isTouched: false,
+  errorMessage: "",
+});
+
+/**
+ * Create initial phone number validation state
+ */
+export const createInitialPhoneNumberValidationState = (): PhoneNumberValidationState => ({
+  isValid: false,
+  isTouched: false,
+  errorMessage: "",
+  digitCount: 0,
+  maxDigits: 10,
+});
+
+/**
+ * Create initial confirm password validation state
+ */
+export const createInitialConfirmPasswordValidationState = (): ConfirmPasswordValidationState => ({
+  isValid: false,
+  isTouched: false,
+  errorMessage: "",
+  isPartialMatch: false,
+});

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger';
 import React, { createContext, useContext, useMemo, useState, useEffect, useRef } from 'react';
 import { ColorSchemeName, useColorScheme, Appearance, Animated, ViewStyle } from 'react-native';
 import { withAlpha } from '@/theme/color-utils';
@@ -21,6 +22,7 @@ export type ThemeColors = {
   textInverse: string;
   
   // Interactive elements
+  primary: string;
   border: string;
   borderSecondary: string;
   tintPrimary: string;
@@ -31,6 +33,7 @@ export type ThemeColors = {
   negative: string;
   warning: string;
   info: string;
+  destructive: string;
   
   // Semantic backgrounds
   errorBg: string;
@@ -74,6 +77,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
   
   // Determine if we should use dark mode
   const isDark = useMemo(() => {
@@ -97,11 +101,31 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           setThemeModeState(savedTheme as ThemeMode);
         }
       } catch (error) {
-        console.warn('Failed to load theme preference:', error);
+        logger.warn('CONTEXT', 'Failed to load theme preference:', error);
+      } finally {
+        // Mark initial load as complete after a longer delay to ensure complete stabilization
+        setTimeout(() => {
+          setIsInitialLoad(false);
+        }, 200);
       }
     };
     loadThemePreference();
   }, []);
+
+  // Listen for system color scheme changes when in system mode
+  useEffect(() => {
+    if (themeMode === 'system') {
+      const subscription = Appearance.addChangeListener(({ colorScheme }) => {
+        // Log the system theme change
+        logger.info('THEME', `System color scheme changed to: ${colorScheme}`);
+        
+        // The isDark computed value will automatically update due to systemColorScheme change
+        // This ensures smooth automatic theme switching when system theme changes
+      });
+
+      return () => subscription?.remove();
+    }
+  }, [themeMode]);
 
   // Enhanced color system with better dark mode UX - softer colors for eye comfort
   const colors = useMemo<ThemeColors>(
@@ -121,6 +145,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       textInverse: isDark ? '#0F172A' : '#FFFFFF',
       
       // Interactive elements - softer borders
+      primary: isDark ? '#10B981' : '#0F766E', // Primary brand color
       border: isDark ? '#333333' : '#E2E8F0', // Lighter border for less harshness
       borderSecondary: isDark ? '#404040' : '#CBD5E1', // Secondary borders
       tintPrimary: isDark ? '#10B981' : '#0F766E', // Slightly softer teal
@@ -131,6 +156,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       negative: isDark ? '#EF4444' : '#DC2626', // Softer red
       warning: isDark ? '#F59E0B' : '#D97706', // Softer amber
       info: isDark ? '#3B82F6' : '#2563EB', // Softer blue
+      destructive: isDark ? '#EF4444' : '#DC2626', // Same as negative for destructive actions
       
       // Semantic backgrounds - darker but not harsh
       errorBg: isDark ? '#2D1B1B' : '#FEE2E2', // Warmer error background
@@ -193,7 +219,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       await AsyncStorage.setItem(THEME_STORAGE_KEY, mode);
       setThemeModeState(mode);
     } catch (error) {
-      console.warn('Failed to save theme preference:', error);
+      logger.warn('CONTEXT', 'Failed to save theme preference:', error);
       setThemeModeState(mode); // Still update state even if save fails
     }
   };
@@ -204,16 +230,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Create transition style for smooth theme changes
-  const transitionStyle: ViewStyle = {
+  // Disable animations on initial load to prevent shake
+  // Avoid scale transform on auth screens to prevent shaking
+  const transitionStyle: ViewStyle = isInitialLoad ? {} : {
     opacity: fadeAnim,
-    transform: [
-      {
-        scale: fadeAnim.interpolate({
-          inputRange: [0.95, 1],
-          outputRange: [0.98, 1],
-        }),
-      },
-    ],
+    // Only use minimal opacity changes for smoother transitions
+    // Scale transform was causing visible shaking on login screen
   };
 
   const value: Theme = {
