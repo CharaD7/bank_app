@@ -18,10 +18,14 @@
         ]
       },
       "env": {
+				"CI": "true",
         "NODE_ENV": "development",
         "EXPO_USE_FAST_RESOLVER": "1",
         "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
       },
+			"hooks": {
+				"prebuild": "bash scripts/fix-assets.sh"
+			},
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleDevelopmentDebug"
@@ -44,10 +48,14 @@
         ]
       },
       "env": {
+				"CI": "true",
         "NODE_ENV": "development",
         "EXPO_USE_FAST_RESOLVER": "1",
         "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
       },
+			"hooks": {
+				"prebuild": "bash scripts/fix-assets.sh"
+			},
       "android": {
         "buildType": "apk"
       }
@@ -65,10 +73,14 @@
         ]
       },
       "env": {
+				"CI": "true",
         "NODE_ENV": "development",
         "EXPO_USE_FAST_RESOLVER": "1",
         "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
       },
+			"hooks": {
+				"prebuild": "bash scripts/fix-assets.sh"
+			},
       "android": {
         "buildType": "app-bundle"
       }
