@@ -37,7 +37,6 @@
       "distribution": "internal",
       "cache": {
         "disabled": true,
-				"gradle": true,
         "paths": [
           "node_modules",
           ".expo",
@@ -60,7 +59,6 @@
       "autoIncrement": true,
       "cache": {
         "disabled": true,
-				"gradle": true,
         "paths": [
           "node_modules",
           ".expo",
