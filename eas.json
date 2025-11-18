@@ -52,7 +52,7 @@
         "buildType": "apk"
       }
     },
-    "development": {
+    "production": {
       "bun": "1.0.0",
       "autoIncrement": true,
       "cache": {
