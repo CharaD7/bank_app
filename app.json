@@ -31,7 +31,8 @@
       "bundleIdentifier": "com.ahantamanruralbank.app",
       "supportsTablet": true,
       "infoPlist": {
-        "NSFaceIDUsageDescription": "Ahantaman Rural Bank uses Face ID for secure and convenient authentication."
+        "NSFaceIDUsageDescription": "Ahantaman Rural Bank uses Face ID for secure and convenient authentication.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
