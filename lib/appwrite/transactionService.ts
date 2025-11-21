@@ -466,13 +466,14 @@ export class AppwriteTransactionService {
   /**
    * Get transactions for a specific card
    */
-  async getCardTransactions(cardId: string, options: Omit<TransactionQueryOptions, 'filters'> & { filters?: Omit<TransactionFilters, 'cardId'> } = {}): Promise<Transaction[]> {
+  async getCardTransactions(cardId: string, options: Omit<TransactionQueryOptions, 'filters'> & { filters?: Omit<TransactionFilters, 'cardId' | 'status'> } = {}): Promise<Transaction[]> {
     try {
       const result = await this.queryTransactions({
         ...options,
         filters: {
           ...options.filters,
           cardId,
+          status: 'completed', // Only include completed transactions for balance calculation
         },
       });
       

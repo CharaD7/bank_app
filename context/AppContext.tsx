@@ -331,92 +331,6 @@ const pushActivity: AppContextType["pushActivity"] = (evt) => {
       logger.warn('CONTEXT', 'Failed to log transaction activity to centralized logger', error);
     });
     
-    // Keep legacy activity event for backward compatibility (until migration is complete)
-    const activityTitle = newTransaction.type === 'transfer' ? 
-      newTransaction.description : 
-      `${newTransaction.type.charAt(0).toUpperCase()}${newTransaction.type.slice(1)}: ${newTransaction.description}`;
-    
-    const activityEvent = {
-      id: `tx.${newTransaction.id}`,
-      category: 'transaction' as const,
-      type: `transaction.${newTransaction.type}`,
-      title: activityTitle,
-      subtitle: new Date(newTransaction.date).toLocaleString(),
-      amount: newTransaction.amount,
-      currency: 'GHS',
-      status: newTransaction.status as any,
-      timestamp: newTransaction.date,
-      transactionId: newTransaction.id,
-      cardId: newTransaction.cardId,
-      tags: [newTransaction.category],
-      mobileNumber: newTransaction.mobileNumber,
-      mobileNetwork: newTransaction.mobileNetwork,
-      metadata: {
-        mobileNumber: newTransaction.mobileNumber,
-        mobileNetwork: newTransaction.mobileNetwork
-      }
-    };
-    
-    pushActivity(activityEvent);
-
-    // Persist transaction and activity to cache and Appwrite
-    const persistDataInBackground = async () => {
-      try {
-        // Update transaction cache
-        // Note: cacheTransactions was removed - transactions are now cached via Appwrite
-        
-        // Update activity cache with the new activity event
-        const currentActivity = await StorageManager.getCachedActivityEvents();
-        const existingEvents = currentActivity?.events || [];
-        const mergedActivity = StorageManager.mergeActivityEvents(existingEvents, [activityEvent]);
-        await StorageManager.cacheActivityEvents(mergedActivity);
-        
-        // Persist to Appwrite in background
-        try {
-          // Check authentication state before attempting Appwrite operations
-          const { isAuthenticated, user } = useAuthStore.getState();
-          if (!isAuthenticated || !user) {
-            logger.auth.warn('[addTransaction] User not authenticated, skipping Appwrite persistence');
-            return;
-          }
-          
-          logger.database.info('[addTransaction] Persisting transaction to Appwrite:', newTransaction.id);
-          const appwriteTransaction = await createAppwriteTransaction(newTransaction);
-          logger.database.info('[addTransaction] Transaction persisted successfully:', appwriteTransaction.id);
-          
-          // Update local state with Appwrite document ID if different
-          if (appwriteTransaction.id !== newTransaction.id) {
-            setTransactions(prev => prev.map(tx => 
-              tx.id === newTransaction.id 
-                ? { ...tx, id: appwriteTransaction.id }
-                : tx
-            ));
-          }
-          
-          // Create activity event in Appwrite
-          await createAppwriteActivityEvent({
-            ...activityEvent,
-            id: `tx.${appwriteTransaction.id}`,
-            transactionId: appwriteTransaction.id,
-          });
-          
-          // Track analysis for this transaction
-          const { trackTransactionAnalytics } = await import('@/lib/analysisHelpers');
-          trackTransactionAnalytics(newTransaction, user.$id || user.id || '');
-          
-        } catch (appwriteError) {
-          logger.database.warn('[addTransaction] Failed to persist to Appwrite:', appwriteError);
-          // Could implement retry logic or queue for later sync
-        }
-        
-      } catch (error) {
-        logger.error('STORAGE', '[addTransaction] Failed to cache data:', error);
-      }
-    };
-    
-    // Cache and persist in background (don't await)
-    persistDataInBackground();
-    
     // Note: Transfers are already persisted via /v1/transfers endpoint in makeTransfer
     // Payments would be persisted via /v1/payments endpoint 
     // This function is mainly for local state updates and activity events
@@ -558,6 +472,12 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
     // Optimistically update local state
     setCards((prev) => prev.filter((c) => c.id !== cardId));
     setActiveCard((prev) => (prev?.id === cardId ? null : prev));
+    
+    // Also remove associated transactions and activities from local state
+    setAllTransactions((prev) => prev.filter((tx) => tx.cardId !== cardId));
+    setTransactions((prev) => prev.filter((tx) => tx.cardId !== cardId));
+    setAllActivity((prev) => prev.filter((act) => act.cardId !== cardId));
+    setActivity((prev) => prev.filter((act) => act.cardId !== cardId));
 
     // Activity
     const activityEvent = {
@@ -2077,6 +1997,7 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
     
     // Clear local state
     setTransactions([]);
+    setAllTransactions([]);
     setTransactionsCursor(null);
     
     // Clear transaction-related activity events
@@ -2095,10 +2016,6 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
           events: nonTransactionEvents 
         });
       }
-      
-      // Set a flag to indicate transactions were manually cleared
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      await AsyncStorage.setItem('transactions_manually_cleared', Date.now().toString());
       
       logger.info('TRANSACTION', 'Transaction data cleared successfully');
     } catch (error) {
@@ -2163,21 +2080,23 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
   const clearAllActivity: AppContextType['clearAllActivity'] = async () => {
     logger.info('ACTIVITY', 'Starting clear all activity operation with database cleanup');
     
-    // Clear local activity state
+    // Clear local activity and transaction state
+    await clearAllTransactions();
     setActivity([]);
+    setAllActivity([]);
     
     try {
       // Clear from activityLogger with proper cache cleanup
       await activityLogger.clearActivities();
       
-      // Clear cached activity events
+      // Clear cached activity and transaction events
       await StorageManager.clearActivityCache();
       
       // Set a flag to indicate activity was manually cleared
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       await AsyncStorage.setItem('activity_manually_cleared', Date.now().toString());
       
-      logger.info('ACTIVITY', 'Activity data cleared successfully with database cleanup');
+      logger.info('ACTIVITY', 'Activity and transaction data cleared successfully with database cleanup');
     } catch (error) {
       logger.error('ACTIVITY', 'Failed to clear activity with database cleanup:', error);
       throw error;

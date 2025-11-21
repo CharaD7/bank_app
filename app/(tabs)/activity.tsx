@@ -31,12 +31,9 @@ import { activityService } from '@/lib/appwrite';
 import { activityLogger } from '@/lib/activityLogger';
 import LoadingAnimation from '@/components/LoadingAnimation';
 import { useLoading, LOADING_CONFIGS } from '@/hooks/useLoading';
-import { getApiBase } from '@/lib/api';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { memo, useCallback, useRef } from 'react';
-
-type Payment = { id: string; status: string; amount?: number; currency?: string; created?: string };
 
 /**
  * Memoized filter button component for optimal performance
@@ -96,7 +93,7 @@ const FilterButton = memo(({
 
 export default function ActivityScreen() {
 
-	const { transactions, activity, clearAllActivity, deleteActivity } = useApp();
+	const { transactions, activity, clearAllActivity, deleteActivity, refreshTransactions } = useApp();
 	const { showAlert } = useAlert();
 	const { showSuccess, showError } = useBiometricToast();
 	const { loading, withLoading, showLoading, hideLoading } = useLoading();
@@ -107,8 +104,6 @@ export default function ActivityScreen() {
 	// No mock data - use real data only
 	const [suppressAllLogs, setSuppressAllLogs] = useState(false);
 	const [activitySuppressed, setActivitySuppressed] = useState(false);
-	const [payments, setPayments] = React.useState<Payment[]>([]);
-	const [loadingMore, setLoadingMore] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
 	const [showClearActivity, setShowClearActivity] = React.useState(false);
 	const [isClearingActivity, setIsClearingActivity] = React.useState(false);
@@ -117,8 +112,6 @@ export default function ActivityScreen() {
 	const [autoRefreshEnabled, setAutoRefreshEnabled] = React.useState(true);
 	const [lastRefreshTime, setLastRefreshTime] = React.useState<Date>(new Date());
 	const refreshIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
-	const PAY_PAGE_SIZE = 10;
-	const [nextPaymentsCursor, setNextPaymentsCursor] = React.useState<string | null>(null);
 	
 	// Debounced save references for performance
 	const saveFiltersTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -140,18 +133,6 @@ export default function ActivityScreen() {
 		}, delay);
 	}, []);
 
-	// Maps Activity screen status chips to payment statuses
-	const paymentStatusMap: Record<string, string> = {
-		completed: 'captured',
-		pending: 'authorized',
-		failed: 'failed',
-		reversed: 'refunded',
-	};
-
-    
-
-    
-
 	// Function to load centralized activities
 	const loadCentralizedActivities = async (showLogs = true) => {
 		try {
@@ -172,7 +153,6 @@ export default function ActivityScreen() {
 		}
 		await loadCentralizedActivities(showLogs);
 		setLastRefreshTime(new Date());
-		// Note: fetchPayments will be called later, we just refresh centralized activities here
 	};
 	
 	// Auto-refresh function
@@ -182,8 +162,6 @@ export default function ActivityScreen() {
 		try {
 			logger.info('ACTIVITY', 'Auto-refreshing activity data');
 			await loadCentralizedActivities(false);
-			// Also refresh payments to ensure consistency
-			await fetchPayments(false);
 			setLastRefreshTime(new Date());
 		} catch (error) {
 			logger.error('ACTIVITY', 'Auto-refresh failed:', error);
@@ -256,14 +234,16 @@ export default function ActivityScreen() {
 		// Load centralized activities
 		loadCentralizedActivities();
 
-		// initial load will be triggered by fetchPayments below
 	}, []);
 
 	// Refresh activities when screen comes into focus
 	useFocusEffect(
 		React.useCallback(() => {
-			refreshActivities();
-		}, [])
+			// Refresh transactions and activities managed by AppContext
+			refreshTransactions();
+			// Also refresh centralized activities from activityLogger
+			loadCentralizedActivities();
+		}, [refreshTransactions]) // Depend on refreshTransactions from AppContext
 	);
 
     
@@ -381,8 +361,7 @@ export default function ActivityScreen() {
 					// Clear activity data
 					await clearAllActivity();
 					
-					// Also suppress any locally loaded logs (payments/transactions) for this session
-					setPayments([]);
+					// Also suppress any locally loaded logs for this session
 					setSuppressAllLogs(true);
 					setActivitySuppressed(true);
 					
@@ -420,8 +399,7 @@ export default function ActivityScreen() {
 			setSuppressAllLogs(false);
 			setActivitySuppressed(false);
 
-			// Reload payments and activities
-			await fetchPayments(true);
+			// Reload activities
 			await refreshActivities();
 			
 			logger.info('UI', 'Activity restored successfully');
@@ -432,133 +410,6 @@ export default function ActivityScreen() {
 		}
 	};
 
-
-	const buildPaymentsQuery = (limit: number, cursor?: string) => {
-		const apiBase = getApiBase();
-		const types = Object.keys(typeFilter).filter((k) => (typeFilter as any)[k]);
-		const statuses = Object.keys(statusFilter)
-			.filter((k) => (statusFilter as any)[k])
-			.map((k) => paymentStatusMap[k] || '')
-			.filter(Boolean);
-		const params = new URLSearchParams();
-		params.set('limit', String(limit));
-		if (types.length) params.set('type', types.join(','));
-		if (statuses.length) params.set('status', statuses.join(','));
-		if (cursor) params.set('cursor', cursor);
-		return `${apiBase.replace(/\/$/, "")}/v1/payments?${params.toString()}`;
-	};
-
-	const fetchPayments = async (reset: boolean) => {
-		try {
-			if (reset) {
-				showLoading();
-				setPayments([]);
-				setNextPaymentsCursor(null);
-			}
-			const url = buildPaymentsQuery(PAY_PAGE_SIZE);
-			const res = await fetch(url, { headers: {} });
-			
-			// Handle authentication errors gracefully
-			if (res.status === 401) {
-				logger.warn('ACTIVITY', 'Authentication failed, clearing payment data');
-				setPayments([]);
-				return; // Don't throw error for auth issues, just show empty state
-			}
-			
-			const data = await res.json();
-			if (!res.ok) {
-				// Handle 404 or API not available gracefully
-				if (res.status === 404) {
-					logger.info('ACTIVITY', 'Payments API not available, showing empty state');
-					setPayments([]);
-					return;
-				}
-				throw new Error(data?.error || `HTTP ${res.status}`);
-			}
-			const list: Payment[] = Array.isArray(data?.data) ? data.data : [];
-			setPayments(list);
-			setNextPaymentsCursor(data?.nextCursor ?? null);
-		} catch (e: any) {
-			// Only log as warning instead of error for common cases
-			if (e?.message?.includes('Failed to fetch') || e?.message?.includes('Network')) {
-				logger.warn('ACTIVITY', 'Network error loading payments:', e.message);
-			} else {
-				logger.error('ACTIVITY', 'Error loading payments:', e.message);
-			}
-			// Don't set error state for auth/network issues - just show empty state
-			setPayments([]);
-		} finally {
-			if (reset) hideLoading();
-		}
-	};
-
-	const loadMorePayments = async () => {
-		if (!nextPaymentsCursor || loadingMore) return;
-		try {
-			setLoadingMore(true);
-			const url = buildPaymentsQuery(PAY_PAGE_SIZE, nextPaymentsCursor);
-			const res = await fetch(url, { headers: {} });
-			
-			// Handle authentication errors gracefully
-			if (res.status === 401) {
-				logger.warn('ACTIVITY', 'Authentication failed while loading more payments');
-				return; // Stop loading more if auth fails
-			}
-			
-			const data = await res.json();
-			if (!res.ok) {
-				if (res.status === 404) {
-					logger.info('ACTIVITY', 'No more payments available');
-					return;
-				}
-				throw new Error(data?.error || `HTTP ${res.status}`);
-			}
-			const list: Payment[] = Array.isArray(data?.data) ? data.data : [];
-			setPayments(prev => {
-				const seen = new Set(prev.map(p => p.id));
-				const merged = [...prev];
-				for (const item of list) if (!seen.has(item.id)) merged.push(item);
-				return merged;
-			});
-			setNextPaymentsCursor(data?.nextCursor ?? null);
-		} catch (e: any) {
-			logger.warn('ACTIVITY', 'Failed to load more payments:', e.message);
-			// Don't show error message to user for load more failures
-		} finally {
-			setLoadingMore(false);
-		}
-	};
-
-	const handleCapture = async (id: string) => {
-		try {
-		const apiBase = getApiBase();
-		const url = `${apiBase.replace(/\/$/, "")}/v1/payments/${id}/capture`;
-		const res = await fetch(url, { method: 'POST', headers: {} });
-			const data = await res.json();
-			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-			setPayments((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'captured' } : p)));
-		} catch {
-			// ignore
-		}
-	};
-
-	const handleRefund = async (id: string) => {
-		try {
-		const apiBase = getApiBase();
-		const url = `${apiBase.replace(/\/$/, "")}/v1/payments/${id}/refund`;
-		const res = await fetch(url, { method: 'POST', headers: {} });
-			const data = await res.json();
-			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-			setPayments((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'refunded' } : p)));
-		} catch {
-			// ignore
-		}
-	};
-
-	React.useEffect(() => {
-		fetchPayments(true);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [typeFilter, statusFilter]);
 	// Simplified transaction accessor - filtering is now done in unified allActivities
 	const getFilteredTransactions = () => {
 		// Use only real transaction data, no mock fallback
@@ -629,27 +480,6 @@ export default function ActivityScreen() {
 					type: 'transaction',
 					timestamp: tx.date,
 					data: tx
-				});
-			}
-		});
-
-		// Add payments (only if not already represented in activity or transactions)
-		payments.forEach(payment => {
-			const hasInCentralized = items.some(item => 
-				item.type === 'centralized' && item.data.transactionId === payment.id
-			);
-			const hasActivity = activityCards.some(evt => 
-				evt.transactionId === payment.id ||
-				(evt.type && evt.type.includes('payment') && evt.title.includes(payment.id.slice(-6)))
-			);
-			const hasTransaction = sourceTransactions.some(tx => tx.id === payment.id);
-			
-			if (!hasInCentralized && !hasActivity && !hasTransaction) {
-				items.push({
-					id: `payment_${payment.id}`,
-					type: 'payment',
-					timestamp: payment.created || new Date().toISOString(),
-					data: payment
 				});
 			}
 		});
@@ -749,7 +579,7 @@ export default function ActivityScreen() {
 		return filteredItems.sort((a, b) => 
 			new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
 		);
-	}, [activityCards, sourceTransactions, payments, suppressAllLogs, centralizedActivities, filters, dateFilter, statusFilter]);
+	}, [activityCards, sourceTransactions, suppressAllLogs, centralizedActivities, filters, dateFilter, statusFilter]);
 
 	return (
 		<SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -986,7 +816,7 @@ export default function ActivityScreen() {
 						<View style={[styles.horizontalBar, { backgroundColor: colors.border }]} />
 						
 					{/* Clear All Button */}
-					{(!suppressAllLogs && (allActivities.length > 0 || activity.length > 0 || payments.length > 0 || centralizedActivities.length > 0)) && (
+					{(!suppressAllLogs && (allActivities.length > 0 || activity.length > 0 || centralizedActivities.length > 0)) && (
 						<View style={styles.clearAllContainer}>
 								<TouchableOpacity onPress={() => setShowClearActivity(true)}>
 									<Text style={[styles.clearAllText, { color: colors.negative }]}>Clear All</Text>
@@ -1092,46 +922,10 @@ export default function ActivityScreen() {
 								return (
 									<TransactionItem key={item.id} transaction={item.data} />
 								);
-							} else if (item.type === 'payment') {
-								return (
-									<View key={item.id} style={[styles.paymentCard, { 
-										backgroundColor: colors.card,
-										shadowColor: colors.textPrimary,
-									}]}>
-										<View style={[styles.paymentIconContainer, { backgroundColor: colors.background }]}>
-											<CreditCard color={colors.tintPrimary} size={20} />
-										</View>
-										<View style={styles.paymentDetails}>
-											<Text style={[styles.paymentTitle, { color: colors.textPrimary }]}>Payment {item.data.id.slice(-6)}</Text>
-											<Text style={[styles.paymentSubtitle, { color: colors.textSecondary }]}>{item.data.status.toUpperCase()} • {item.data.amount ?? '-'} {item.data.currency ?? ''}</Text>
-											<Text style={[styles.paymentDate, { color: colors.textSecondary }]}>{item.data.created ? new Date(item.data.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</Text>
-										</View>
-										<View style={styles.paymentActions}>
-											{item.data.status === 'authorized' && (
-												<TouchableOpacity onPress={() => handleCapture(item.data.id)} style={[styles.actionButton, { backgroundColor: colors.tintPrimary }]}>
-													<Text style={styles.actionButtonText}>Capture</Text>
-												</TouchableOpacity>
-											)}
-											{(item.data.status === 'authorized' || item.data.status === 'captured') && (
-												<TouchableOpacity onPress={() => handleRefund(item.data.id)} style={[styles.actionButton, { backgroundColor: colors.negative, marginTop: 4 }]}>
-													<Text style={styles.actionButtonText}>Refund</Text>
-												</TouchableOpacity>
-											)}
-										</View>
-									</View>
-								);
 							}
 							return null;
 						})}
 
-						{/* Load more button */}
-						{nextPaymentsCursor && (
-							<View style={{ padding: 16, alignItems: 'center' }}>
-								<TouchableOpacity disabled={loadingMore} onPress={loadMorePayments} style={{ backgroundColor: colors.tintPrimary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, opacity: loadingMore ? 0.8 : 1 }}>
-									<Text style={{ color: '#fff', fontWeight: '700' }}>{loadingMore ? 'Loading…' : 'Load more payments'}</Text>
-								</TouchableOpacity>
-							</View>
-						)}
 					</ScrollView>
 				</View>
 
@@ -1176,7 +970,7 @@ export default function ActivityScreen() {
 					onConfirm={handleClearActivity}
 					onRestore={handleRestoreActivity}
 					dataType="activity"
-					count={activity.length + centralizedActivities.length + payments.length}
+					count={activity.length + centralizedActivities.length}
 					isLoading={false}
 					useDelayedDeletion={true}
 					delayMinutes={2}
