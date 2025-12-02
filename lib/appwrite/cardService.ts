@@ -183,6 +183,31 @@ export class AppwriteCardService {
         last4: cardData.cardNumber.slice(-4),
       });
 
+      // Check if the card already exists and is tied to a different user
+      const cleanCardNumber = cardData.cardNumber.replace(/\s/g, '');
+      const last4 = cleanCardNumber.slice(-4);
+      
+      const queries = [
+        Query.equal('last4', last4),
+        Query.equal('status', 'active')
+      ];
+
+      const response = await databaseService.listDocuments(collections.cards.id, queries);
+
+      if (response.documents.length > 0) {
+        const existingCardRaw = response.documents.find(doc => 
+          doc.cardNumber === cleanCardNumber || 
+          doc.cardNumber === cardData.cardNumber
+        );
+
+        if (existingCardRaw) {
+          const existingCard = this.transformAppwriteToCard(existingCardRaw);
+          if (existingCard.userId !== userId) {
+            throw new Error('This card is already registered to another user.');
+          }
+        }
+      }
+
       // Transform data for Appwrite schema
       const appwriteData = this.transformCardForAppwrite(cardData, userId);
       

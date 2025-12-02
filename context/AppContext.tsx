@@ -8,7 +8,7 @@ import {
   queryTransactions as queryAppwriteTransactions
 } from "@/lib/appwrite/transactionService";
 import { StorageManager } from "@/lib/storageService";
-import { initNotificationService } from "@/lib/appwrite/notificationService";
+import { initNotificationService, showAlertWithNotification } from "@/lib/appwrite/notificationService";
 import { logger } from "@/lib/logger";
 
 // Appwrite database services
@@ -32,6 +32,7 @@ import { initConnectionMonitoring, getConnectionStatus } from "@/lib/connectionS
 import { activityLogger } from "@/lib/activityLogger";
 import useAuthStore from "@/store/auth.store";
 import appStateService from "@/lib/appState.service";
+import { useAlert } from "@/context/AlertContext"; // Import useAlert
 import { 
   useTransactionLoading, 
   useCardLoading, 
@@ -48,7 +49,7 @@ interface AppContextType {
   removeCard: (cardId: string) => void;
   addTransaction: (transaction: Omit<Transaction, "id" | "date">) => void;
   updateCardBalance: (cardId: string, newBalance: number) => void;
-  makeTransfer: (cardId: string, amount: number, recipientCardNumber: string, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; recipientNewBalance?: number }>;
+  makeTransfer: (cardId: string, amount: number, recipientCardNumber: string, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; recipientNewBalance?: number; isPending?: boolean }>;
   makeWithdrawal: (cardId: string, amount: number, withdrawalMethod: string, withdrawalDetails: any, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; transactionId?: string; reference?: string; instructions?: any }>;
   makeDeposit: (params: { cardId?: string; amount?: number; currency?: string; escrowMethod?: string; description?: string; depositId?: string; action?: string; mobileNetwork?: string; mobileNumber?: string; reference?: string }, onSuccess?: (data: any) => void) => Promise<{ success: boolean; error?: string; data?: any }>;
   makeTransaction: (params: { type: 'withdrawal' | 'deposit' | 'transfer' | 'payment'; amount: number; fromCardId?: string; toCardId?: string; description?: string; fee?: number }) => Promise<{ success: boolean; error?: string }>;
@@ -368,7 +369,7 @@ const addCard: AppContextType["addCard"] = async (cardData) => {
       cardNumber: cardData.cardNumber,
       cardHolderName: cardData.cardHolderName,
       expiryDate: cardData.expiryDate,
-      balance: cardData.balance ?? 0,
+      balance: cardData.balance ?? 40000, // Set optimistic balance to default 40000
       cardType: cardData.cardType,
       isActive: true,
       cardColor: cardData.cardColor || '#1D4ED8',
@@ -577,7 +578,16 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         error: 'User not authenticated. Please sign in again.'
       };
     }
-    
+    const currentUserId = user.$id || user.id;
+    if (!currentUserId) {
+        logger.error('TRANSFERS', 'Current user ID not found');
+        return {
+          success: false,
+          error: 'User not authenticated. Please sign in again.'
+        };
+    }
+    const { showAlert } = useAlert(); // Destructure showAlert from useAlert()
+
     try {
       // Use the enhanced transfer service
       const { transferService } = await import('@/lib/appwrite/transferService');
@@ -593,15 +603,40 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
       
       logger.info('TRANSFERS', '[Enhanced] Executing transfer with enhanced service');
       
-      const result = await transferService.executeTransfer(transferRequest);
+      const result = await transferService.executeTransfer(transferRequest, currentUserId); // Pass currentUserId
       
       if (result.success) {
-        // Update local card balance optimistically
-        if (result.sourceNewBalance !== undefined) {
-          updateCardBalance(cardId, result.sourceNewBalance);
+        // If it's a pending cross-user transfer, show a special message
+        if (result.isPending) {
+          showAlertWithNotification(
+            showAlert,
+            'info',
+            `Transfer to ${result.recipientCard?.cardHolderName || 'recipient'} (****${result.recipientCardNumber?.slice(-4)}) initiated. This transfer requires manual processing and may take up to 30 minutes to reflect in the recipient's account.`,
+            'Pending Transfer'
+          );
+          // Only update source card balance locally if it's a pending transfer
+          if (result.sourceNewBalance !== undefined) {
+            updateCardBalance(cardId, result.sourceNewBalance);
+          }
+        } else {
+          // Normal immediate transfer (same user)
+          // Update local card balance optimistically
+          if (result.sourceNewBalance !== undefined) {
+            updateCardBalance(cardId, result.sourceNewBalance);
+          }
+          // Update recipient card balance locally (only for same-user transfers)
+          if (result.recipientCard?.id && result.recipientNewBalance !== undefined) {
+            updateCardBalance(result.recipientCard.id, result.recipientNewBalance);
+          }
+          showAlertWithNotification(
+            showAlert,
+            'success',
+            `Successfully transferred GHS ${amount.toFixed(2)} to ${result.recipientCard?.cardHolderName || 'recipient'} (****${result.recipientCardNumber?.slice(-4)}).`,
+            'Transfer Complete'
+          );
         }
         
-        // Refresh data with slight delay to ensure database consistency
+        // Refresh data with slight delay to ensure database consistency for all types of transfers
         setTimeout(() => {
           refreshCardBalances();
           refreshTransactions();
@@ -610,7 +645,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         logger.info('TRANSFERS', '[Enhanced] Transfer completed successfully', {
           transactionId: result.transactionId,
           sourceNewBalance: result.sourceNewBalance,
-          recipientNewBalance: result.recipientNewBalance
+          recipientNewBalance: result.recipientNewBalance,
+          isPending: result.isPending
         });
         
         return {

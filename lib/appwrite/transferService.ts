@@ -9,6 +9,7 @@ import { databaseService, Query, collections } from './database';
 import { AppwriteCardService, updateCardSystem } from './cardService';
 import { AppwriteTransactionService } from './transactionService';
 import { AppwriteActivityService } from './activityService';
+import useAuthStore from '@/store/auth.store'; // Import useAuthStore
 import { logger } from '../logger';
 import { activityLogger } from '../activityLogger';
 import { Card, Transaction } from '@/types';
@@ -52,9 +53,8 @@ export class AppwriteTransferService {
    * Find a card by its card number across all users
    * This checks if the recipient card exists in the system
    */
-  async findCardByNumber(cardNumber: string): Promise<CardLookupResult> {
+  async findCardByNumber(cardNumber: string, currentUserId: string): Promise<CardLookupResult> {
     try {
-      // Clean the card number (remove spaces and non-digits)
       const cleanCardNumber = cardNumber.replace(/\D/g, '');
       const last4 = cleanCardNumber.slice(-4);
       
@@ -62,61 +62,67 @@ export class AppwriteTransferService {
         inputLength: cleanCardNumber.length,
         last4: last4
       });
-      
-      // Search for cards with matching last 4 digits
-      // We search by last4 field which should be indexed for performance
+
       const documents = await databaseService.listDocuments(
         collections.cards.id,
         [
           Query.equal('last4', last4),
-          Query.equal('status', 'active'), // Only find active cards
-          Query.limit(10) // Limit results for performance
+          Query.equal('status', 'active'),
+          Query.limit(10)
         ]
       );
-      
-      if (documents.length === 0) {
+
+      logger.info('TRANSFER_SERVICE', 'Documents received from Appwrite:', {
+        total: documents.total,
+        documents: documents.documents.map(d => ({ id: d.$id, last4: d.last4, holder: d.holder, cardNumber: d.cardNumber ? 'present' : 'missing' }))
+      });
+
+      if (documents.documents.length === 0) {
         logger.info('TRANSFER_SERVICE', 'No cards found with matching last 4 digits', { last4 });
         return { exists: false };
       }
-      
-      // Find exact match by full card number (if available) or last4
-      let matchedCard = null;
-      
-      for (const doc of documents.documents) {
-        // Try to match full card number if available
+
+      const exactMatches = documents.documents.filter(doc => {
         if (doc.cardNumber) {
           const docCleanNumber = doc.cardNumber.replace(/\D/g, '');
-          if (docCleanNumber === cleanCardNumber) {
-            matchedCard = doc;
-            break;
-          }
+          return docCleanNumber === cleanCardNumber;
         }
-        
-        // Fall back to last4 match (first one found)
-        if (!matchedCard && doc.last4 === last4) {
-          matchedCard = doc;
-        }
-      }
-      
-      if (!matchedCard) {
-        logger.info('TRANSFER_SERVICE', 'No exact card match found', { last4 });
-        return { exists: false };
-      }
-      
-      // Transform to Card type
-      const card = this.transformDocumentToCard(matchedCard);
-      
-      logger.info('TRANSFER_SERVICE', 'Card found', {
-        cardId: card.id,
-        cardHolder: card.cardHolderName,
-        last4: card.cardNumber.slice(-4),
+        return false;
       });
+
+      if (exactMatches.length === 1) {
+        logger.info('TRANSFER_SERVICE', 'Found exact match by full card number');
+        const card = this.transformDocumentToCard(exactMatches[0]);
+        return {
+          exists: true,
+          card: card,
+          isUserCard: card.userId === currentUserId
+        };
+      }
       
-      return {
-        exists: true,
-        card: card,
-        isUserCard: false // Will be determined by caller if needed
-      };
+      if (exactMatches.length > 1) {
+        logger.warn('TRANSFER_SERVICE', 'Multiple exact matches found. This should not happen.');
+        return { exists: false, error: 'Ambiguous card number. Multiple exact matches found.' };
+      }
+
+      // If no exact match, check for unique last4 match
+      if (documents.documents.length === 1) {
+        logger.info('TRANSFER_SERVICE', 'Found unique match by last4');
+        const card = this.transformDocumentToCard(documents.documents[0]);
+        return {
+          exists: true,
+          card: card,
+          isUserCard: card.userId === currentUserId
+        };
+      }
+      
+      if (documents.documents.length > 1) {
+        logger.warn('TRANSFER_SERVICE', 'Multiple cards found with same last4, but no exact match. Ambiguous.', { last4 });
+        return { exists: false, error: 'Multiple cards found with the same last 4 digits. Please enter the full card number.' };
+      }
+
+      logger.info('TRANSFER_SERVICE', 'No exact or unique card match found', { last4 });
+      return { exists: false };
       
     } catch (error) {
       logger.error('TRANSFER_SERVICE', 'Failed to lookup card', error);
@@ -134,10 +140,20 @@ export class AppwriteTransferService {
     recipientCard?: Card;
   }> {
     try {
+      const { user } = useAuthStore.getState();
+      const currentUserId = user?.$id || user?.id;
+      if (!currentUserId) {
+        return { isValid: false, error: 'User not authenticated for transfer validation' };
+      }
+
       // 1. Get source card and validate it exists and belongs to user
       const sourceCard = await cardService.getCard(transferRequest.sourceCardId);
       if (!sourceCard) {
         return { isValid: false, error: 'Source card not found' };
+      }
+      // Ensure source card belongs to current user
+      if (sourceCard.userId !== currentUserId) {
+        return { isValid: false, error: 'Source card does not belong to the current user' };
       }
       
       // 2. Check if source card has sufficient balance
@@ -148,8 +164,8 @@ export class AppwriteTransferService {
         };
       }
       
-      // 3. Look up recipient card in database
-      const cardLookup = await this.findCardByNumber(transferRequest.recipientCardNumber);
+      // 3. Look up recipient card in database, passing currentUserId
+      const cardLookup = await this.findCardByNumber(transferRequest.recipientCardNumber, currentUserId);
       if (!cardLookup.exists || !cardLookup.card) {
         return { 
           isValid: false, 
@@ -191,7 +207,7 @@ export class AppwriteTransferService {
   /**
    * Execute a validated transfer with balance updates and transaction logging
    */
-  async executeTransfer(transferRequest: TransferRequest): Promise<TransferResult> {
+  async executeTransfer(transferRequest: TransferRequest, currentUserId: string): Promise<TransferResult> {
     try {
       logger.info('TRANSFER_SERVICE', 'Starting transfer execution', {
         sourceCardId: transferRequest.sourceCardId,
@@ -215,101 +231,157 @@ export class AppwriteTransferService {
           error: 'Card validation failed'
         };
       }
-      
-      // 2. Calculate new balances
-      const sourceNewBalance = sourceCard.balance - transferRequest.amount;
-      const recipientNewBalance = recipientCard.balance + transferRequest.amount;
-      
-      logger.info('TRANSFER_SERVICE', 'Calculated new balances', {
-        sourceOld: sourceCard.balance,
-        sourceNew: sourceNewBalance,
-        recipientOld: recipientCard.balance,
-        recipientNew: recipientNewBalance
-      });
-      
-      // 3. Update card balances (atomic-like operation)
-      try {
-        // Update source card balance
-        await cardService.updateCard(sourceCard.id, {
-          balance: sourceNewBalance
+
+      // Determine if it's a transfer to the current user's other card
+      const isSameUserTransfer = recipientCard.userId === currentUserId;
+
+      if (isSameUserTransfer) {
+        logger.info('TRANSFER_SERVICE', 'Executing same-user transfer (immediate)');
+        // 2. Calculate new balances (immediate)
+        const sourceNewBalance = sourceCard.balance - transferRequest.amount;
+        const recipientNewBalance = recipientCard.balance + transferRequest.amount;
+        
+        logger.info('TRANSFER_SERVICE', 'Calculated new balances', {
+          sourceOld: sourceCard.balance,
+          sourceNew: sourceNewBalance,
+          recipientOld: recipientCard.balance,
+          recipientNew: recipientNewBalance
         });
         
-        // Update recipient card balance (using system update since it may belong to different user)
-        await updateCardSystem(recipientCard.id, {
-          balance: recipientNewBalance
+        // 3. Update card balances (atomic-like operation) (immediate)
+        try {
+          // Update source card balance
+          await cardService.updateCard(sourceCard.id, {
+            balance: sourceNewBalance
+          });
+          
+          // Update recipient card balance (using system update since it may belong to different user)
+          await updateCardSystem(recipientCard.id, {
+            balance: recipientNewBalance
+          });
+          
+          logger.info('TRANSFER_SERVICE', 'Card balances updated successfully');
+          
+        } catch (balanceUpdateError) {
+          logger.error('TRANSFER_SERVICE', 'Failed to update card balances', balanceUpdateError);
+          throw new Error('Failed to update card balances. Transfer aborted.');
+        }
+        
+        // 4. Create transaction records (immediate)
+        let sourceTransactionId: string | undefined;
+        
+        try {
+          // Create outgoing transaction for source card
+          const sourceTransaction = await transactionService.createTransaction({
+            userId: sourceCard.userId,
+            cardId: sourceCard.id,
+            type: 'transfer',
+            amount: -transferRequest.amount, // Negative for outgoing
+            currency: transferRequest.currency || sourceCard.currency || 'GHS',
+            description: transferRequest.description || `Transfer to ${recipientCard.cardHolderName}`,
+            status: 'completed',
+            recipient: `${recipientCard.cardHolderName} (${transferRequest.recipientCardNumber})`,
+            reference: `TXN-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+          });
+          
+          sourceTransactionId = sourceTransaction.id;
+          
+          // Create incoming transaction for recipient card
+          await transactionService.createTransaction({
+            userId: recipientCard.userId,
+            cardId: recipientCard.id,
+            type: 'transfer',
+            amount: transferRequest.amount, // Positive for incoming
+            currency: transferRequest.currency || recipientCard.currency || 'GHS',
+            description: `Transfer from ${sourceCard.cardHolderName}`,
+            status: 'completed',
+            sender: `${sourceCard.cardHolderName} (${sourceCard.cardNumber.slice(-4)})`,
+            reference: sourceTransaction.reference // Same reference for linked transactions
+          });
+          
+          logger.info('TRANSFER_SERVICE', 'Transaction records created', {
+            sourceTransactionId: sourceTransaction.id
+          });
+          
+        } catch (transactionError) {
+          logger.error('TRANSFER_SERVICE', 'Failed to create transaction records', transactionError);
+          // Note: At this point balances are already updated
+          // In a production system, you might want to implement compensation logic
+        }
+        
+        // 5. Clear transfer-related cache (immediate)
+        await this.clearTransferCache(sourceCard.id, recipientCard.id);
+        
+        // 6. Log activity events (fire-and-forget) (immediate)
+        this.logTransferActivity(sourceCard, recipientCard, transferRequest.amount, sourceTransactionId);
+        
+        logger.info('TRANSFER_SERVICE', 'Same-user transfer completed successfully', {
+          transactionId: sourceTransactionId,
+          sourceNewBalance: sourceNewBalance,
+          recipientNewBalance: recipientNewBalance
         });
         
-        logger.info('TRANSFER_SERVICE', 'Card balances updated successfully');
+        return {
+          success: true,
+          transactionId: sourceTransactionId,
+          sourceNewBalance: sourceNewBalance,
+          recipientNewBalance: recipientNewBalance,
+          recipientCard: recipientCard
+        };
+
+      } else { // Cross-user transfer
+        logger.info('TRANSFER_SERVICE', 'Executing cross-user transfer (pending)');
+        // 2. Update source card balance immediately (outgoing)
+        const sourceNewBalance = sourceCard.balance - transferRequest.amount;
+        try {
+          await cardService.updateCard(sourceCard.id, {
+            balance: sourceNewBalance
+          });
+          logger.info('TRANSFER_SERVICE', 'Source card balance updated for pending transfer');
+        } catch (balanceUpdateError) {
+          logger.error('TRANSFER_SERVICE', 'Failed to update source card balance for pending transfer', balanceUpdateError);
+          throw new Error('Failed to update source card balance. Transfer aborted.');
+        }
         
-      } catch (balanceUpdateError) {
-        logger.error('TRANSFER_SERVICE', 'Failed to update card balances', balanceUpdateError);
-        throw new Error('Failed to update card balances. Transfer aborted.');
+        // 3. Create a pending transaction for the source card
+        let sourceTransactionId: string | undefined;
+        try {
+          const sourceTransaction = await transactionService.createTransaction({
+            userId: sourceCard.userId,
+            cardId: sourceCard.id,
+            type: 'transfer',
+            amount: -transferRequest.amount, // Negative for outgoing
+            currency: transferRequest.currency || sourceCard.currency || 'GHS',
+            description: transferRequest.description || `Pending transfer to ${recipientCard.cardHolderName}`,
+            status: 'pending', // Mark as pending
+            recipient: `${recipientCard.cardHolderName} (${transferRequest.recipientCardNumber})`,
+            reference: `TXN-PENDING-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+          });
+          sourceTransactionId = sourceTransaction.id;
+          logger.info('TRANSFER_SERVICE', 'Pending transaction created for source card');
+        } catch (transactionError) {
+          logger.error('TRANSFER_SERVICE', 'Failed to create pending transaction record', transactionError);
+          // Revert source card balance if transaction creation fails?
+          // For now, log and return error
+          throw new Error('Failed to create pending transaction record.');
+        }
+        
+        // 4. Log activity events (fire-and-forget)
+        this.logTransferActivity(sourceCard, recipientCard, transferRequest.amount, sourceTransactionId, 'pending');
+
+        logger.info('TRANSFER_SERVICE', 'Cross-user transfer initiated (pending)', {
+          transactionId: sourceTransactionId,
+          sourceNewBalance: sourceNewBalance
+        });
+        
+        return {
+          success: true,
+          isPending: true, // Indicate that this transfer is pending
+          transactionId: sourceTransactionId,
+          sourceNewBalance: sourceNewBalance,
+          recipientCard: recipientCard // Still return recipient info for modal
+        };
       }
-      
-      // 4. Create transaction records
-      let sourceTransactionId: string | undefined;
-      
-      try {
-        // Create outgoing transaction for source card
-        const sourceTransaction = await transactionService.createTransaction({
-          userId: sourceCard.userId,
-          cardId: sourceCard.id,
-          type: 'transfer',
-          amount: -transferRequest.amount, // Negative for outgoing
-          currency: transferRequest.currency || sourceCard.currency || 'GHS',
-          description: transferRequest.description || `Transfer to ${recipientCard.cardHolderName}`,
-          status: 'completed',
-          recipient: `${recipientCard.cardHolderName} (${transferRequest.recipientCardNumber})`,
-          reference: `TXN-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
-        });
-        
-        sourceTransactionId = sourceTransaction.id;
-        
-        // Create incoming transaction for recipient card
-        await transactionService.createTransaction({
-          userId: recipientCard.userId,
-          cardId: recipientCard.id,
-          type: 'transfer',
-          amount: transferRequest.amount, // Positive for incoming
-          currency: transferRequest.currency || recipientCard.currency || 'GHS',
-          description: `Transfer from ${sourceCard.cardHolderName}`,
-          status: 'completed',
-          sender: `${sourceCard.cardHolderName} (${sourceCard.cardNumber.slice(-4)})`,
-          reference: sourceTransaction.reference // Same reference for linked transactions
-        });
-        
-        logger.info('TRANSFER_SERVICE', 'Transaction records created', {
-          sourceTransactionId: sourceTransaction.id
-        });
-        
-      } catch (transactionError) {
-        logger.error('TRANSFER_SERVICE', 'Failed to create transaction records', transactionError);
-        // Note: At this point balances are already updated
-        // In a production system, you might want to implement compensation logic
-      }
-      
-      // 5. Clear transfer-related cache
-      await this.clearTransferCache(sourceCard.id, recipientCard.id);
-      
-      // 6. Log activity events (fire-and-forget)
-      this.logTransferActivity(sourceCard, recipientCard, transferRequest.amount, sourceTransactionId);
-      
-      // 7. Trigger auto-refresh of relevant data (fire-and-forget)
-      this.triggerAutoRefresh(sourceCard.id, recipientCard.id);
-      
-      logger.info('TRANSFER_SERVICE', 'Transfer completed successfully with cache cleanup and auto-refresh', {
-        transactionId: sourceTransactionId,
-        sourceNewBalance,
-        recipientNewBalance
-      });
-      
-      return {
-        success: true,
-        transactionId: sourceTransactionId,
-        sourceNewBalance,
-        recipientNewBalance,
-        recipientCard
-      };
       
     } catch (error) {
       logger.error('TRANSFER_SERVICE', 'Transfer execution failed', error);
@@ -372,12 +444,13 @@ export class AppwriteTransferService {
     sourceCard: Card, 
     recipientCard: Card, 
     amount: number, 
-    transactionId?: string
+    transactionId?: string,
+    status: 'completed' | 'pending' | 'failed' = 'completed' // Add status parameter
   ): Promise<void> {
     try {
       // Log outgoing transfer activity for sender using centralized logger
       await activityLogger.logTransactionActivity(
-        'completed',
+        status, // Use the provided status
         transactionId || `transfer_${Date.now()}`,
         {
           type: 'transfer',
@@ -389,19 +462,22 @@ export class AppwriteTransferService {
         sourceCard.userId
       );
       
-      // Log incoming transfer activity for recipient using centralized logger
-      await activityLogger.logTransactionActivity(
-        'completed',
-        transactionId || `transfer_${Date.now()}_in`,
-        {
-          type: 'transfer',
-          amount: amount,
-          cardId: recipientCard.id,
-          recipientCardId: sourceCard.id,
-          description: `Transfer received from ${sourceCard.cardHolderName}`
-        },
-        recipientCard.userId
-      );
+      // Only log incoming activity if the status is completed
+      if (status === 'completed') {
+        // Log incoming transfer activity for recipient using centralized logger
+        await activityLogger.logTransactionActivity(
+          status,
+          transactionId || `transfer_${Date.now()}_in`,
+          {
+            type: 'transfer',
+            amount: amount,
+            cardId: recipientCard.id,
+            recipientCardId: sourceCard.id,
+            description: `Transfer received from ${sourceCard.cardHolderName}`
+          },
+          recipientCard.userId
+        );
+      }
 
       logger.info('TRANSFER_SERVICE', 'Transfer activity logged successfully');
       
@@ -425,10 +501,9 @@ export class AppwriteTransferService {
         : doc.expiryDate,
       cardType: doc.brand || doc.cardType || 'card',
       cardColor: doc.color || doc.cardColor || '#1e40af',
-      balance: doc.balance ? (doc.balance / 100) : 0, // Convert from cents
-      currency: doc.currency || 'GHS',
-      token: doc.token,
-      isActive: doc.status ? (doc.status !== 'inactive') : (doc.isActive !== false),
+          balance: doc.balance ? doc.balance : 0, // Use balance as is (display value integer)
+          currency: doc.currency || 'GHS',
+          token: doc.token,      isActive: doc.status ? (doc.status !== 'inactive') : (doc.isActive !== false),
     };
   }
 }

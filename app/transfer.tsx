@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { BankCard } from "@/components/BankCard";
 import { useApp } from "@/context/AppContext";
 import { useAlert } from "@/context/AlertContext";
+import { useAuth } from "@/context/AuthContext";
 import { transferService, type TransferRequest } from "@/lib/appwrite";
 import LoadingAnimation from '@/components/LoadingAnimation';
 import { useLoading, LOADING_CONFIGS } from '@/hooks/useLoading';
@@ -79,6 +80,7 @@ export default function TransferScreen() {
     }
   };
   
+  const { user } = useAuth();
   const validateRecipientCard = async (cardNumber: string) => {
     if (!validateCardNumber(cardNumber)) {
       setCardValidationResult({
@@ -90,7 +92,7 @@ export default function TransferScreen() {
     
     setValidatingCard(true);
     try {
-      const cardLookup = await transferService.findCardByNumber(cardNumber);
+      const cardLookup = await transferService.findCardByNumber(cardNumber, user.$id);
       
       if (cardLookup.exists && cardLookup.card) {
         // Check if it's the same as the source card
@@ -108,7 +110,7 @@ export default function TransferScreen() {
       } else {
         setCardValidationResult({
           isValid: false,
-          error: 'Card not registered on the system'
+          error: cardLookup.error || 'Card not registered on the system'
         });
       }
     } catch (error) {
