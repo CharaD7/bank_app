@@ -49,7 +49,7 @@ interface AppContextType {
   removeCard: (cardId: string) => void;
   addTransaction: (transaction: Omit<Transaction, "id" | "date">) => void;
   updateCardBalance: (cardId: string, newBalance: number) => void;
-  makeTransfer: (cardId: string, amount: number, recipientCardNumber: string, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; recipientNewBalance?: number; isPending?: boolean }>;
+  makeTransfer: (cardId: string, amount: number, recipientCardNumber: string, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; recipientNewBalance?: number; isPending?: boolean; transactionId?: string; recipientCard?: any }>;
   makeWithdrawal: (cardId: string, amount: number, withdrawalMethod: string, withdrawalDetails: any, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; transactionId?: string; reference?: string; instructions?: any }>;
   makeDeposit: (params: { cardId?: string; amount?: number; currency?: string; escrowMethod?: string; description?: string; depositId?: string; action?: string; mobileNetwork?: string; mobileNumber?: string; reference?: string }, onSuccess?: (data: any) => void) => Promise<{ success: boolean; error?: string; data?: any }>;
   makeTransaction: (params: { type: 'withdrawal' | 'deposit' | 'transfer' | 'payment'; amount: number; fromCardId?: string; toCardId?: string; description?: string; fee?: number }) => Promise<{ success: boolean; error?: string }>;
@@ -586,7 +586,6 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
           error: 'User not authenticated. Please sign in again.'
         };
     }
-    const { showAlert } = useAlert(); // Destructure showAlert from useAlert()
 
     try {
       // Use the enhanced transfer service
@@ -606,34 +605,14 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
       const result = await transferService.executeTransfer(transferRequest, currentUserId); // Pass currentUserId
       
       if (result.success) {
-        // If it's a pending cross-user transfer, show a special message
-        if (result.isPending) {
-          showAlertWithNotification(
-            showAlert,
-            'info',
-            `Transfer to ${result.recipientCard?.cardHolderName || 'recipient'} (****${result.recipientCardNumber?.slice(-4)}) initiated. This transfer requires manual processing and may take up to 30 minutes to reflect in the recipient's account.`,
-            'Pending Transfer'
-          );
-          // Only update source card balance locally if it's a pending transfer
-          if (result.sourceNewBalance !== undefined) {
-            updateCardBalance(cardId, result.sourceNewBalance);
-          }
-        } else {
-          // Normal immediate transfer (same user)
-          // Update local card balance optimistically
-          if (result.sourceNewBalance !== undefined) {
-            updateCardBalance(cardId, result.sourceNewBalance);
-          }
-          // Update recipient card balance locally (only for same-user transfers)
-          if (result.recipientCard?.id && result.recipientNewBalance !== undefined) {
-            updateCardBalance(result.recipientCard.id, result.recipientNewBalance);
-          }
-          showAlertWithNotification(
-            showAlert,
-            'success',
-            `Successfully transferred GHS ${amount.toFixed(2)} to ${result.recipientCard?.cardHolderName || 'recipient'} (****${result.recipientCardNumber?.slice(-4)}).`,
-            'Transfer Complete'
-          );
+        // Update local card balance optimistically for source card
+        if (result.sourceNewBalance !== undefined) {
+          updateCardBalance(cardId, result.sourceNewBalance);
+        }
+        
+        // Update recipient card balance locally (only for same-user immediate transfers)
+        if (!result.isPending && result.recipientCard?.id && result.recipientNewBalance !== undefined) {
+          updateCardBalance(result.recipientCard.id, result.recipientNewBalance);
         }
         
         // Refresh data with slight delay to ensure database consistency for all types of transfers
@@ -655,7 +634,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
           newBalance: result.sourceNewBalance,
           recipientNewBalance: result.recipientNewBalance,
           transactionId: result.transactionId,
-          recipientCard: result.recipientCard
+          recipientCard: result.recipientCard,
+          isPending: result.isPending
         };
       } else {
         logger.error('TRANSFERS', '[Enhanced] Transfer failed', result.error);

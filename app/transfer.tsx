@@ -90,6 +90,14 @@ export default function TransferScreen() {
       return;
     }
     
+    if (!user) {
+      setCardValidationResult({
+        isValid: false,
+        error: 'User not authenticated'
+      });
+      return;
+    }
+    
     setValidatingCard(true);
     try {
       const cardLookup = await transferService.findCardByNumber(cardNumber, user.$id);
@@ -192,28 +200,46 @@ export default function TransferScreen() {
       );
       
       if (result.success) {
-        // Prepare success modal data
-        const successData = {
-          amount: transferAmount,
-          currency: 'GHS',
-          recipientName: cardValidationResult.cardHolderName || recipientName || 'Recipient',
-          recipientCardNumber: recipientCardNumber,
-          sourceNewBalance: result.newBalance || 0,
-          recipientNewBalance: result.recipientNewBalance,
-          transactionId: result.transactionId || `TXN-${Date.now()}`,
-          reference: `TXN-${Date.now().toString().slice(-8)}`,
-          timestamp: new Date().toISOString()
-        };
-        
-        setTransferSuccessData(successData);
-        setShowSuccessModal(true);
-        
-        logger.info('SCREEN', '[TransferScreen] Enhanced transfer completed successfully', {
-          transactionId: result.transactionId,
-          sourceNewBalance: result.newBalance,
-          recipientNewBalance: result.recipientNewBalance
-        });
-        
+        // Handle pending transfers differently
+        if (result.isPending) {
+          showSuccess(
+            'Transfer Pending',
+            `Transfer of GHS ${transferAmount.toFixed(2)} to ${cardValidationResult.cardHolderName || recipientName} has been initiated. It may take up to 30 minutes to complete.`
+          );
+          
+          // Reset form for pending transfers
+          setRecipientCardNumber('');
+          setRecipientName('');
+          setAmount('');
+          setCardValidationResult(null);
+          setStep('select-card');
+          
+          logger.info('SCREEN', '[TransferScreen] Pending transfer initiated', {
+            transactionId: result.transactionId
+          });
+        } else {
+          // Prepare success modal data for immediate transfers
+          const successData = {
+            amount: transferAmount,
+            currency: 'GHS',
+            recipientName: cardValidationResult.cardHolderName || recipientName || 'Recipient',
+            recipientCardNumber: recipientCardNumber,
+            sourceNewBalance: result.newBalance || 0,
+            recipientNewBalance: result.recipientNewBalance,
+            transactionId: result.transactionId || `TXN-${Date.now()}`,
+            reference: `TXN-${Date.now().toString().slice(-8)}`,
+            timestamp: new Date().toISOString()
+          };
+          
+          setTransferSuccessData(successData);
+          setShowSuccessModal(true);
+          
+          logger.info('SCREEN', '[TransferScreen] Enhanced transfer completed successfully', {
+            transactionId: result.transactionId,
+            sourceNewBalance: result.newBalance,
+            recipientNewBalance: result.recipientNewBalance
+          });
+        }
       } else {
         showError(
           'Transfer Failed',
@@ -498,6 +524,21 @@ export default function TransferScreen() {
         subtitle={loading.subtitle}
         type={loading.type}
         size={loading.size}
+      />
+      
+      <TransferSuccessModal
+        visible={showSuccessModal}
+        onClose={() => {
+          setShowSuccessModal(false);
+          setTransferSuccessData(null);
+          // Reset form
+          setRecipientCardNumber('');
+          setRecipientName('');
+          setAmount('');
+          setCardValidationResult(null);
+          setStep('select-card');
+        }}
+        transferData={transferSuccessData}
       />
     </SafeAreaView>
   );

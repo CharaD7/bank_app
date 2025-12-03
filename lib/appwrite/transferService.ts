@@ -31,12 +31,15 @@ export interface TransferResult {
   sourceNewBalance?: number;
   recipientNewBalance?: number;
   recipientCard?: Card;
+  isPending?: boolean;
+  recipientCardNumber?: string;
 }
 
 export interface CardLookupResult {
   exists: boolean;
   card?: Card;
   isUserCard?: boolean;
+  error?: string;
 }
 
 // Create service instances to avoid circular dependencies
@@ -326,7 +329,8 @@ export class AppwriteTransferService {
           transactionId: sourceTransactionId,
           sourceNewBalance: sourceNewBalance,
           recipientNewBalance: recipientNewBalance,
-          recipientCard: recipientCard
+          recipientCard: recipientCard,
+          recipientCardNumber: transferRequest.recipientCardNumber
         };
 
       } else { // Cross-user transfer
@@ -379,7 +383,8 @@ export class AppwriteTransferService {
           isPending: true, // Indicate that this transfer is pending
           transactionId: sourceTransactionId,
           sourceNewBalance: sourceNewBalance,
-          recipientCard: recipientCard // Still return recipient info for modal
+          recipientCard: recipientCard, // Still return recipient info for modal
+          recipientCardNumber: transferRequest.recipientCardNumber
         };
       }
       
