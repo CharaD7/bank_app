@@ -645,14 +645,21 @@ export async function disableBiometricAuthentication(): Promise<void> {
     // Revoke server-side tokens first
     try {
       const deviceId = await generateDeviceId();
-      await revokeServerBiometricTokens(undefined, deviceId);
+      const storedToken = await getBiometricToken();
       
-      await logBiometricAudit(
-        'revoke',
-        'all',
-        deviceId,
-        true
-      );
+      // Only revoke server tokens if we have a valid local token with userId
+      if (storedToken?.userId) {
+        await revokeServerBiometricTokens(storedToken.userId, deviceId);
+        
+        await logBiometricAudit(
+          'revoke',
+          'all',
+          deviceId,
+          true
+        );
+      } else {
+        logger.info('BIOMETRIC', 'No valid token found, skipping server token revocation');
+      }
     } catch (serverError) {
       logger.warn('BIOMETRIC', 'Server token revocation failed, continuing with local cleanup', serverError);
     }
@@ -734,7 +741,14 @@ export async function clearAllBiometricData(): Promise<void> {
   try {
     // Revoke all server-side tokens for the user
     try {
-      await revokeServerBiometricTokens(); // Revoke all tokens for the user
+      const storedToken = await getBiometricToken();
+      
+      // Only revoke server tokens if we have a valid local token with userId
+      if (storedToken?.userId) {
+        await revokeServerBiometricTokens(storedToken.userId); // Revoke all tokens for the user
+      } else {
+        logger.info('BIOMETRIC', 'No valid token found, skipping server token cleanup');
+      }
     } catch (serverError) {
       logger.warn('BIOMETRIC', 'Server token cleanup failed, continuing with local cleanup', serverError);
     }

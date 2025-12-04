@@ -197,36 +197,36 @@ const BiometricToast: React.FC<BiometricToastProps> = ({
         return {
           icon: 'check-circle',
           colors: [colors.positive, colors.positive + '80'],
-          backgroundColor: colors.positive + '15',
-          borderColor: colors.positive + '30',
+          backgroundColor: colors.positive,
+          borderColor: colors.positive,
         };
       case 'error':
         return {
           icon: 'error',
           colors: [colors.destructive, colors.destructive + '80'],
-          backgroundColor: colors.destructive + '15',
-          borderColor: colors.destructive + '30',
+          backgroundColor: colors.destructive,
+          borderColor: colors.destructive,
         };
       case 'warning':
         return {
           icon: 'warning',
           colors: [colors.warning || '#FF9500', (colors.warning || '#FF9500') + '80'],
-          backgroundColor: (colors.warning || '#FF9500') + '15',
-          borderColor: (colors.warning || '#FF9500') + '30',
+          backgroundColor: (colors.warning || '#FF9500'),
+          borderColor: (colors.warning || '#FF9500'),
         };
       case 'info':
         return {
           icon: 'info',
           colors: [colors.tintPrimary, colors.tintPrimary + '80'],
-          backgroundColor: colors.tintPrimary + '15',
-          borderColor: colors.tintPrimary + '30',
+          backgroundColor: colors.tintPrimary,
+          borderColor: colors.tintPrimary,
         };
       default:
         return {
           icon: 'info',
           colors: [colors.textSecondary, colors.textSecondary + '80'],
-          backgroundColor: colors.textSecondary + '15',
-          borderColor: colors.textSecondary + '30',
+          backgroundColor: colors.textSecondary,
+          borderColor: colors.textSecondary,
         };
     }
   };
@@ -351,14 +351,6 @@ const styles = StyleSheet.create({
   container: {
     borderRadius: 16,
     borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
     overflow: 'hidden',
   },
   progressContainer: {

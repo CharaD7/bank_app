@@ -129,7 +129,7 @@ export class AppwriteCardService {
     
     // Only set balance if explicitly provided, otherwise let Appwrite use database default
     if (cardData.balance !== undefined) {
-      result.balance = cardData.balance; // Store balance as regular number (not cents)
+      result.balance = Math.round(cardData.balance); // Store balance as rounded integer (display value)
     }
     
     return result;
@@ -139,19 +139,16 @@ export class AppwriteCardService {
    * Transform Appwrite document to Card type
    */
   private transformAppwriteToCard(doc: any): Card {
-    // Smart balance logic:
-    // 1. If balance field exists and is not 0, use it
-    // 2. If balance is 0 or doesn't exist, we'll calculate it later in getCard method or when requested
-    // 3. Fallback to initialBalance -> startingBalance -> default 40000
     let cardBalance = 0;
-    if (typeof doc.balance === 'number' && doc.balance !== 0) {
-      cardBalance = doc.balance;
+    // doc.balance from Appwrite is the display value as an integer
+    if (typeof doc.balance === 'number') { // Check if it's a number
+      cardBalance = doc.balance; // Use balance as is (display value)
     } else if (typeof doc.initialBalance === 'number') {
-      cardBalance = doc.initialBalance;
+      cardBalance = doc.initialBalance; // Use initialBalance as is (display value)
     } else if (typeof doc.startingBalance === 'number') {
-      cardBalance = doc.startingBalance;
+      cardBalance = doc.startingBalance; // Use startingBalance as is (display value)
     } else {
-      cardBalance = 40000; // Default balance if no field is available
+      cardBalance = 40000; // Default displayed balance (GHS 40000.00)
     }
     
     return {
@@ -185,6 +182,31 @@ export class AppwriteCardService {
         balance: cardData.balance,
         last4: cardData.cardNumber.slice(-4),
       });
+
+      // Check if the card already exists and is tied to a different user
+      const cleanCardNumber = cardData.cardNumber.replace(/\s/g, '');
+      const last4 = cleanCardNumber.slice(-4);
+      
+      const queries = [
+        Query.equal('last4', last4),
+        Query.equal('status', 'active')
+      ];
+
+      const response = await databaseService.listDocuments(collections.cards.id, queries);
+
+      if (response.documents.length > 0) {
+        const existingCardRaw = response.documents.find(doc => 
+          doc.cardNumber === cleanCardNumber || 
+          doc.cardNumber === cardData.cardNumber
+        );
+
+        if (existingCardRaw) {
+          const existingCard = this.transformAppwriteToCard(existingCardRaw);
+          if (existingCard.userId !== userId) {
+            throw new Error('This card is already registered to another user.');
+          }
+        }
+      }
 
       // Transform data for Appwrite schema
       const appwriteData = this.transformCardForAppwrite(cardData, userId);
@@ -248,7 +270,7 @@ export class AppwriteCardService {
       const appwriteUpdateData: any = {};
       
       if (updateData.balance !== undefined) {
-        appwriteUpdateData.balance = updateData.balance; // Store balance as regular number (not cents)
+        appwriteUpdateData.balance = Math.round(updateData.balance); // Store balance as rounded integer (display value)
       }
       if (updateData.cardHolderName !== undefined) {
         appwriteUpdateData.holder = updateData.cardHolderName;
@@ -460,10 +482,10 @@ export class AppwriteCardService {
           queries.push(Query.equal('currency', currency));
         }
         if (minBalance !== undefined) {
-          queries.push(Query.greaterThanEqual('balance', Math.round(minBalance * 100)));
+          queries.push(Query.greaterThanEqual('balance', Math.round(minBalance)));
         }
         if (maxBalance !== undefined) {
-          queries.push(Query.lessThanEqual('balance', Math.round(maxBalance * 100)));
+          queries.push(Query.lessThanEqual('balance', Math.round(maxBalance)));
         }
       }
 

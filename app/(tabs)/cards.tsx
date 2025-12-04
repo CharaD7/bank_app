@@ -142,30 +142,6 @@ function AddCardButton() {
         useAppwriteDirectly = true;
       }
 
-      // Update loading message for duplicate checking
-      updateLoading(loadingId, `Verifying card details for ${last4}...`);
-
-      // Check for duplicates in Appwrite database
-      try {
-        logger.info('CARDS', 'Checking for duplicate cards in Appwrite database');
-        const existingCard = await findCardByNumber(payload.number.replace(/\s+/g, ''), payload.name.trim());
-        
-        if (existingCard) {
-          logger.warn('CARDS', 'Duplicate card found in Appwrite database', {
-            existingCardId: existingCard.id,
-            holderName: existingCard.cardHolderName,
-            last4
-          });
-          showAlert('error', `A card ending in ${last4} for ${payload.name} already exists in your account.`, 'Card Already Exists');
-          stopLoading(loadingId);
-          return;
-        }
-        
-        logger.info('CARDS', 'No duplicate found in Appwrite, proceeding with creation');
-      } catch (duplicateCheckError) {
-        logger.warn('CARDS', 'Duplicate check in Appwrite failed, proceeding with creation', duplicateCheckError);
-      }
-
       logger.info('CARDS', '🔄 Duplicate check completed, continuing to card creation');
 
       // Update loading message for card creation

@@ -61,7 +61,7 @@ export default function AddCardModal({ visible, onClose, onSubmit, isLoading = f
   const isFormValid = () => {
     const cleanNumber = number.replace(/\s+/g, "");
     return (
-      name.trim().length >= 2 &&
+      name.trim().length > 0 && // Ensure name is not empty
       cleanNumber.length >= 13 && cleanNumber.length <= 19 &&
       expMonth.length === 2 && parseInt(expMonth) >= 1 && parseInt(expMonth) <= 12 &&
       expYear.length === 4 && parseInt(expYear) >= new Date().getFullYear() &&

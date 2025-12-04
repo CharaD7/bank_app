@@ -1,6 +1,7 @@
 import { logger } from '@/lib/logger';
 import useAuthStore from "@/store/auth.store";
 import { router } from "expo-router";
+import { useFocusEffect } from '@react-navigation/native';
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -27,22 +28,23 @@ import { QuickAction } from "@/components/QuickAction";
 import { TransactionItem } from "@/components/TransactionItem";
 import { ProfilePicture } from "@/components/ProfilePicture";
 import { ClearDataModal } from "@/components/ClearDataModal";
-import { TransactionAnalytics } from "@/components/TransactionAnalytics";
-import AnalyticsReportsModal from "@/components/AnalyticsReportsModal";
+import { TransactionAnalysis } from "@/components/TransactionAnalysis";
+import AnalysisReportsModal from "@/components/AnalysisReportsModal";
 import { useApp } from "@/context/AppContext";
 import { useTheme } from "@/context/ThemeContext";
 import { createMutedColor } from "@/theme/color-utils";
 
 export default function HomeScreen() {
-  const { cards, activeCard, setActiveCard, transactions, clearAllTransactions, notifications } = useApp();
+  const { user } = useAuthStore();
+  const { colors, transitionStyle } = useTheme();
+  const { cards, activeCard, setActiveCard, transactions, clearAllActivity, notifications, refreshTransactions } = useApp();
   const [showNotifications, setShowNotifications] = React.useState(false);
   const [showDateFilter, setShowDateFilter] = React.useState(false);
   const [dateFilter, setDateFilter] = React.useState("all");
   const [showClearTransactions, setShowClearTransactions] = React.useState(false);
   const [isClearingTransactions, setIsClearingTransactions] = React.useState(false);
-  const [showAnalyticsReports, setShowAnalyticsReports] = React.useState(false);
-
-  const { user } = useAuthStore();
+  const [showAnalysisReports, setShowAnalysisReports] = React.useState(false);
+  const [transactionsSuppressed, setTransactionsSuppressed] = React.useState(false);
   const unreadCount = React.useMemo(() => {
     const unreadNotifications = notifications.filter(n => n.unread && !n.archived);
     const count = unreadNotifications.length;
@@ -54,6 +56,25 @@ export default function HomeScreen() {
     });
     return count;
   }, [notifications]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const checkSuppression = async () => {
+        const flag = await AsyncStorage.getItem('activity_manually_cleared');
+        if (flag) {
+          setTransactionsSuppressed(true);
+        }
+      };
+      checkSuppression();
+    }, [])
+  );
+
+  const handleRestoreTransactions = async () => {
+    await AsyncStorage.removeItem('activity_manually_cleared');
+    setTransactionsSuppressed(false);
+    await refreshTransactions();
+  };
+
 
   const getFilteredTransactions = () => {
     const now = new Date();
@@ -114,21 +135,19 @@ export default function HomeScreen() {
   const handleClearTransactions = async () => {
     setIsClearingTransactions(true);
     try {
-      await clearAllTransactions();
-      logger.info('SCREEN', 'Transactions cleared successfully, dismissing modal');
-      setShowClearTransactions(false);
+      await clearAllActivity();
+      logger.info('SCREEN', 'All data cleared successfully, dismissing modal');
     } catch (error) {
-      logger.error('SCREEN', 'Failed to clear transactions:', error);
+      logger.error('SCREEN', 'Failed to clear all data:', error);
     } finally {
       setIsClearingTransactions(false);
+      setShowClearTransactions(false);
     }
   };
 
   const handleCancelClearTransactions = () => {
     setShowClearTransactions(false);
   };
-
-  const { colors, transitionStyle } = useTheme();
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -206,12 +225,12 @@ export default function HomeScreen() {
             <QuickAction
               icon={<MoreHorizontal color={colors.tintPrimary} size={24} />}
               label="More"
-              onPress={() => setShowAnalyticsReports(true)}
+              onPress={() => setShowAnalysisReports(true)}
             />
           </View>
 
-          {/* Transaction Analytics */}
-          <TransactionAnalytics />
+          {/* Transaction Analysis */}
+          <TransactionAnalysis />
 
           <View style={[styles.transactionsSection, { backgroundColor: colors.card }]}>
             {/* Sticky Header */}
@@ -222,7 +241,7 @@ export default function HomeScreen() {
                     <Text style={[styles.sectionTitle, { color: colors.textPrimary, textDecorationColor: colors.tintPrimary }]}>{getDateFilterLabel()}</Text>
                   </TouchableOpacity>
                 </View>
-                {transactions.length > 0 && (
+                {transactions.length > 0 && !transactionsSuppressed && (
                   <TouchableOpacity onPress={() => setShowClearTransactions(true)}>
                     <Text style={[styles.clearAllText, { color: colors.negative }]}>Clear All</Text>
                   </TouchableOpacity>
@@ -240,7 +259,24 @@ export default function HomeScreen() {
               indicatorStyle="default"
             >
               {/* Empty state when no transactions */}
-              {recentTransactions.length === 0 ? (
+              {transactionsSuppressed ? (
+                <View style={styles.emptyStateContainer}>
+                  <CreditCard 
+                    color={createMutedColor(colors.textSecondary, colors.background)} 
+                    size={48} 
+                  />
+                  <Text style={[styles.emptyStateTitle, { color: colors.textPrimary }]}>Transactions Cleared</Text>
+                  <Text style={[styles.emptyStateDescription, { color: colors.textSecondary }]}>
+                    Your transaction history has been cleared for this session.
+                  </Text>
+                  <TouchableOpacity 
+                    style={[styles.emptyStateButton, { backgroundColor: colors.tintPrimary }]}
+                    onPress={handleRestoreTransactions}
+                  >
+                    <Text style={styles.emptyStateButtonText}>Restore Transactions</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : recentTransactions.length === 0 ? (
                 <View style={styles.emptyStateContainer}>
                   <CreditCard 
                     color={createMutedColor(colors.textSecondary, colors.background)} 
@@ -291,9 +327,9 @@ export default function HomeScreen() {
           isLoading={isClearingTransactions}
         />
 
-        <AnalyticsReportsModal
-          visible={showAnalyticsReports}
-          onClose={() => setShowAnalyticsReports(false)}
+        <AnalysisReportsModal
+          visible={showAnalysisReports}
+          onClose={() => setShowAnalysisReports(false)}
         />
       </KeyboardAvoidingView>
       </Animated.View>

@@ -395,7 +395,7 @@ Future plans for the BankApp include:
 - **Biometric Authentication**: Add fingerprint and face recognition for secure login
 - **Dark Mode**: Implement a dark theme option for better user experience
 - **Push Notifications**: Add real-time notifications for transactions and account updates
-- **Expense Analytics**: Add charts and graphs for visualizing spending patterns
+- **Expense Analysis**: Add charts and graphs for visualizing spending patterns
 - **Multiple Languages**: Add support for multiple languages
 - **Offline Mode**: Implement offline functionality for basic features
 

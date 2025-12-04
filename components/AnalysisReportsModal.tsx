@@ -1,0 +1,1260 @@
+/**
+ * Analysis & Reports Modal
+ * 
+ * Comprehensive modal for viewing analysis and generating reports.
+ * Provides options to generate reports for specific cards or all cards.
+ */
+
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  Modal,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  Dimensions
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { LineChart, PieChart } from 'react-native-chart-kit';
+
+import { useTheme } from '@/context/ThemeContext';
+import { useApp } from '@/context/AppContext';
+import { 
+  analysisService,
+  type AnalysisData,
+  type ReportOptions,
+  type ReportFormat,
+  type ReportPeriod 
+} from '@/lib/appwrite';
+import { fileStorageService } from '@/lib/storage/fileStorage.service';
+import { logger } from '@/lib/logger';
+import ReportStatusModal from '@/components/ReportStatusModal';
+import ReportPreviewModal, { ReportPreviewData } from '@/components/ReportPreviewModal';
+
+const { width } = Dimensions.get('window');
+
+interface AnalysisReportsModalProps {
+  visible: boolean;
+  onClose: () => void;
+}
+
+const PERIOD_OPTIONS: { value: ReportPeriod; label: string }[] = [
+  { value: '7d', label: 'Last 7 Days' },
+  { value: '30d', label: 'Last 30 Days' },
+  { value: '90d', label: 'Last 90 Days' },
+  { value: '1y', label: 'Last Year' },
+];
+
+const FORMAT_OPTIONS: { value: ReportFormat; label: string; icon: string }[] = [
+  { value: 'csv', label: 'CSV Spreadsheet', icon: 'document-text-outline' },
+  { value: 'json', label: 'JSON Data', icon: 'code-slash-outline' },
+  { value: 'pdf', label: 'PDF Report', icon: 'document-outline' },
+];
+
+export default function AnalysisReportsModal({ visible, onClose }: AnalysisReportsModalProps) {
+  const { colors } = useTheme();
+  const { cards, activeCard } = useApp();
+
+  const [activeTab, setActiveTab] = useState<'analysis' | 'reports'>('analysis');
+  const [selectedPeriod, setSelectedPeriod] = useState<ReportPeriod>('30d');
+  const [selectedCards, setSelectedCards] = useState<string[]>([]);
+  const [selectedFormat, setSelectedFormat] = useState<ReportFormat>('csv');
+  const [includeInsights, setIncludeInsights] = useState(true);
+  const [includeCharts, setIncludeCharts] = useState(true);
+  const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  
+  // Report Status Modal state
+  const [reportStatusModal, setReportStatusModal] = useState({
+    visible: false,
+    status: 'idle' as 'loading' | 'success' | 'error' | 'idle',
+    reportFormat: '',
+    fileName: '',
+    filePath: '',
+    errorMessage: ''
+  });
+
+  // Report Preview Modal state
+  const [reportPreviewModal, setReportPreviewModal] = useState({
+    visible: false,
+    reportData: null as ReportPreviewData | null,
+    isLoading: false,
+  });
+
+  // Initialize with active card selected
+  useEffect(() => {
+    if (activeCard && !selectedCards.includes(activeCard.id)) {
+      setSelectedCards([activeCard.id]);
+    }
+  }, [activeCard]);
+
+  // Load analysis when modal opens or settings change
+  useEffect(() => {
+    if (visible && activeTab === 'analysis') {
+      loadAnalysis();
+    }
+  }, [visible, activeTab, selectedPeriod, selectedCards]);
+
+  const loadAnalysis = async () => {
+    setIsLoadingAnalysis(true);
+    try {
+      const analysisData = await analysisService.generateAnalysis(
+        selectedCards.length > 0 ? selectedCards : undefined,
+        selectedPeriod
+      );
+      setAnalysis(analysisData);
+    } catch (error) {
+      logger.error('ANALYSIS_MODAL', 'Failed to load analysis:', error);
+      Alert.alert('Error', 'Failed to load analysis data. Please try again.');
+    } finally {
+      setIsLoadingAnalysis(false);
+    }
+  };
+
+  const handleCardSelection = (cardId: string) => {
+    setSelectedCards(prev => {
+      if (prev.includes(cardId)) {
+        return prev.filter(id => id !== cardId);
+      } else {
+        return [...prev, cardId];
+      }
+    });
+  };
+
+  const selectAllCards = () => {
+    setSelectedCards(cards.map(card => card.id));
+  };
+
+  const clearCardSelection = () => {
+    setSelectedCards([]);
+  };
+
+  const generateReport = async () => {
+    if (selectedCards.length === 0 && cards.length > 0) {
+      Alert.alert('Select Cards', 'Please select at least one card or choose "All Cards" to generate a report.');
+      return;
+    }
+
+    setIsGeneratingReport(true);
+    
+    // Show preview loading
+    setReportPreviewModal({
+      visible: true,
+      reportData: null,
+      isLoading: true,
+    });
+
+    try {
+      const reportOptions: ReportOptions = {
+        cardIds: selectedCards.length > 0 ? selectedCards : undefined,
+        period: selectedPeriod,
+        format: selectedFormat,
+        includeCharts,
+        includeInsights
+      };
+
+      // Use the new generateReportContent method
+      const { content, fileName: generatedFileName } = await analysisService.generateReportContent(reportOptions);
+      
+      // Prepare preview data
+      const reportData: ReportPreviewData = {
+        content,
+        fileName: generatedFileName,
+        format: selectedFormat as 'csv' | 'json' | 'html' | 'pdf',
+        title: `Financial Report - ${PERIOD_OPTIONS.find(p => p.value === selectedPeriod)?.label || selectedPeriod}`,
+      };
+      
+      // Show preview
+      setReportPreviewModal({
+        visible: true,
+        reportData,
+        isLoading: false,
+      });
+
+    } catch (error) {
+      logger.error('ANALYSIS_MODAL', 'Failed to generate report:', error);
+      
+      // Close preview and show error status
+      setReportPreviewModal({
+        visible: false,
+        reportData: null,
+        isLoading: false,
+      });
+      
+      setReportStatusModal({
+        visible: true,
+        status: 'error',
+        reportFormat: selectedFormat,
+        fileName: '',
+        filePath: '',
+        errorMessage: error instanceof Error ? error.message : 'Failed to generate report. Please try again.'
+      });
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
+  const shareReport = async (filePath?: string) => {
+    const pathToShare = filePath || reportStatusModal.filePath;
+    if (!pathToShare) {
+      Alert.alert('Error', 'No report file available to share.');
+      return;
+    }
+    
+    try {
+      // Determine MIME type from format
+      const mimeType = fileStorageService.getMimeType(reportStatusModal.reportFormat as 'csv' | 'json' | 'html' | 'pdf');
+      const success = await fileStorageService.shareFile(pathToShare, mimeType);
+      
+      if (success) {
+        // Close the status modal after sharing
+        setReportStatusModal(prev => ({ ...prev, visible: false }));
+      } else {
+        Alert.alert('Error', 'Sharing not available on this device.');
+      }
+    } catch (error) {
+      logger.error('ANALYSIS_MODAL', 'Failed to share report:', error);
+      Alert.alert('Error', 'Failed to share report. Please try again.');
+    }
+  };
+
+  const closeReportStatusModal = () => {
+    setReportStatusModal(prev => ({ ...prev, visible: false }));
+  };
+
+  const retryReportGeneration = () => {
+    closeReportStatusModal();
+    generateReport();
+  };
+
+  // Preview Modal handlers
+  const handlePreviewClose = () => {
+    setReportPreviewModal({
+      visible: false,
+      reportData: null,
+      isLoading: false,
+    });
+  };
+
+  const handlePreviewSave = async (reportData: ReportPreviewData) => {
+    try {
+      // Save the content using the file storage service
+      const saveResult = await fileStorageService.saveFileToDevice({
+        content: reportData.content,
+        fileName: reportData.fileName,
+        fileType: reportData.format,
+        location: 'downloads',
+        requestPermissions: true,
+        showSuccessMessage: true
+      });
+      
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || 'Failed to save report file');
+      }
+      
+      const filePath = saveResult.filePath!;
+      const fileName = saveResult.fileName!;
+      
+      // Close preview and show success status
+      setReportPreviewModal({
+        visible: false,
+        reportData: null,
+        isLoading: false,
+      });
+      
+      setReportStatusModal({
+        visible: true,
+        status: 'success',
+        reportFormat: reportData.format,
+        fileName,
+        filePath,
+        errorMessage: ''
+      });
+    } catch (error) {
+      logger.error('ANALYSIS_MODAL', 'Failed to save report from preview:', error);
+      throw error; // Let the preview modal handle the error display
+    }
+  };
+
+  const handlePreviewShare = async (reportData: ReportPreviewData) => {
+    try {
+      // First save the file temporarily
+      const saveResult = await fileStorageService.saveFileToDevice({
+        content: reportData.content,
+        fileName: reportData.fileName,
+        fileType: reportData.format,
+        location: 'cache', // Use cache for temporary sharing
+        requestPermissions: false,
+        showSuccessMessage: false
+      });
+      
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || 'Failed to prepare file for sharing');
+      }
+      
+      // Share the file
+      const mimeType = fileStorageService.getMimeType(reportData.format);
+      const success = await fileStorageService.shareFile(saveResult.filePath!, mimeType);
+      
+      if (!success) {
+        throw new Error('Sharing not available on this device');
+      }
+      
+      // Close preview after successful sharing
+      setReportPreviewModal({
+        visible: false,
+        reportData: null,
+        isLoading: false,
+      });
+    } catch (error) {
+      logger.error('ANALYSIS_MODAL', 'Failed to share report from preview:', error);
+      throw error; // Let the preview modal handle the error display
+    }
+  };
+
+  const renderAnalysisTab = () => {
+    if (isLoadingAnalysis) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.tintPrimary} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Loading analysis...
+          </Text>
+        </View>
+      );
+    }
+
+    if (!analysis) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="analytics" size={64} color={colors.textSecondary} />
+          <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+            No Data Available
+          </Text>
+          <Text style={[styles.emptyDescription, { color: colors.textSecondary }]}>
+            Select cards and a time period to view analysis
+          </Text>
+        </View>
+      );
+    }
+
+    // Prepare chart data
+    const chartData = analysis.trends.dailyTransactions.slice(-7); // Last 7 days
+    const lineChartData = {
+      labels: chartData.map(d => new Date(d.date).getDate().toString()),
+      datasets: [
+        {
+          data: chartData.map(d => d.totalAmount),
+          strokeWidth: 2,
+          color: (opacity = 1) => `rgba(25, 118, 210, ${opacity})`,
+        }
+      ]
+    };
+
+    const pieChartData = analysis.trends.transactionTypes.slice(0, 5).map((type, index) => ({
+      name: type.type,
+      amount: type.amount,
+      color: [
+        '#1976d2',
+        '#388e3c',
+        '#f57c00',
+        '#d32f2f',
+        '#7b1fa2'
+      ][index] || '#666',
+      legendFontColor: colors.textSecondary,
+      legendFontSize: 12,
+    }));
+
+    return (
+      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+        {/* Summary Cards */}
+        <View style={styles.summaryContainer}>
+          <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.summaryValue, { color: colors.tintPrimary }]}>
+              GH₵{analysis.summary.currentBalance.toFixed(2)}
+            </Text>
+            <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
+              Current Balance
+            </Text>
+          </View>
+
+          <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.summaryValue, { color: '#4caf50' }]}>
+              GH₵{analysis.summary.totalIncome.toFixed(2)}
+            </Text>
+            <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
+              Total Income
+            </Text>
+          </View>
+
+          <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.summaryValue, { color: '#f44336' }]}>
+              GH₵{analysis.summary.totalExpenses.toFixed(2)}
+            </Text>
+            <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
+              Total Expenses
+            </Text>
+          </View>
+
+          <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.summaryValue, { 
+              color: analysis.summary.netBalance >= 0 ? '#4caf50' : '#f44336' 
+            }]}>
+              GH₵{analysis.summary.netBalance.toFixed(2)}
+            </Text>
+            <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>
+              Net Balance
+            </Text>
+          </View>
+        </View>
+
+        {/* Charts Section */}
+        {chartData.length > 0 && (
+          <View style={[styles.chartContainer, { backgroundColor: colors.card }]}>
+            <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>
+              Daily Transaction Trends (Last 7 Days)
+            </Text>
+            <LineChart
+              data={lineChartData}
+              width={width - 80}
+              height={200}
+              chartConfig={{
+                backgroundColor: colors.card,
+                backgroundGradientFrom: colors.card,
+                backgroundGradientTo: colors.card,
+                color: (opacity = 1) => `rgba(25, 118, 210, ${opacity})`,
+                labelColor: (opacity = 1) => colors.textSecondary,
+                style: { borderRadius: 16 },
+                propsForDots: {
+                  r: '4',
+                  strokeWidth: '2',
+                  stroke: colors.tintPrimary,
+                },
+              }}
+              style={{ marginVertical: 8, borderRadius: 16 }}
+            />
+          </View>
+        )}
+
+        {pieChartData.length > 0 && (
+          <View style={[styles.chartContainer, { backgroundColor: colors.card }]}>
+            <Text style={[styles.chartTitle, { color: colors.textPrimary }]}>
+              Transaction Types Breakdown
+            </Text>
+            <PieChart
+              data={pieChartData}
+              width={width - 80}
+              height={200}
+              chartConfig={{
+                color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+              }}
+              accessor="amount"
+              backgroundColor="transparent"
+              paddingLeft="15"
+            />
+          </View>
+        )}
+
+        {/* Insights */}
+        {analysis.insights.length > 0 && (
+          <View style={[styles.insightsContainer, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+              Financial Insights
+            </Text>
+            {analysis.insights.map((insight, index) => (
+              <View key={index} style={[styles.insightCard, { backgroundColor: colors.background }]}>
+                <View style={styles.insightHeader}>
+                  <Ionicons 
+                    name={getInsightIcon(insight.type)} 
+                    size={20} 
+                    color={getInsightColor(insight.severity || 'info')} 
+                  />
+                  <Text style={[styles.insightTitle, { color: colors.textPrimary }]}>
+                    {insight.title}
+                  </Text>
+                </View>
+                <Text style={[styles.insightDescription, { color: colors.textSecondary }]}>
+                  {insight.description}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Transaction Types Table */}
+        <View style={[styles.tableContainer, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Transaction Types
+          </Text>
+          {analysis.trends.transactionTypes.map((type, index) => (
+            <View key={index} style={[styles.tableRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.tableCell, { color: colors.textPrimary }]}>
+                {type.type}
+              </Text>
+              <Text style={[styles.tableCell, { color: colors.textSecondary }]}>
+                {type.count}
+              </Text>
+              <Text style={[styles.tableCell, { color: colors.textPrimary }]}>
+                GH₵{type.amount.toFixed(2)}
+              </Text>
+              <Text style={[styles.tableCell, { color: colors.textSecondary }]}>
+                {type.percentage.toFixed(1)}%
+              </Text>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  };
+
+  const renderReportsTab = () => {
+    return (
+      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+        {/* Card Selection */}
+        <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Select Cards
+          </Text>
+          
+          <View style={styles.cardSelectionHeader}>
+            <TouchableOpacity 
+              onPress={selectAllCards} 
+              style={[
+                styles.selectionButton,
+                {
+                  backgroundColor: colors.tintPrimary,
+                  borderColor: colors.tintPrimary,
+                }
+              ]}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="checkmark-done" size={16} color="#fff" />
+              <Text style={[styles.selectionButtonText, { color: '#fff' }]}>
+                All Cards
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              onPress={clearCardSelection} 
+              style={[
+                styles.selectionButton,
+                {
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                }
+              ]}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="close-circle-outline" size={16} color={colors.textSecondary} />
+              <Text style={[styles.selectionButtonText, { color: colors.textSecondary }]}>
+                Clear
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {cards.map(card => {
+            const isSelected = selectedCards.includes(card.id);
+            return (
+              <TouchableOpacity
+                key={card.id}
+                style={[
+                  styles.cardSelectionItem,
+                  {
+                    backgroundColor: isSelected ? colors.tintSoftBg : colors.background,
+                    borderColor: isSelected ? colors.tintPrimary : colors.border,
+                    borderWidth: 2,
+                    shadowColor: isSelected ? colors.tintPrimary : 'transparent',
+                    shadowOpacity: isSelected ? 0.2 : 0,
+                    shadowRadius: 4,
+                    elevation: isSelected ? 2 : 0,
+                  }
+                ]}
+                onPress={() => handleCardSelection(card.id)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.cardSelectionContent}>
+                  <View style={styles.cardInfo}>
+                    <Text style={[styles.cardName, { color: colors.textPrimary, fontWeight: isSelected ? '600' : '500' }]}>
+                      {card.cardHolderName}
+                    </Text>
+                    <Text style={[styles.cardDetails, { color: colors.textSecondary }]}>
+                      {card.cardHolderName} • ****{card.cardNumber.slice(-4)}
+                    </Text>
+                    <Text style={[styles.cardBalance, { color: colors.positive, fontWeight: '600' }]}>
+                      GH₵{card.balance.toFixed(2)}
+                    </Text>
+                  </View>
+                  <View style={[
+                    styles.radioButton,
+                    {
+                      backgroundColor: isSelected ? colors.tintPrimary : colors.background,
+                      borderColor: isSelected ? colors.tintPrimary : colors.border,
+                    }
+                  ]}>
+                    {isSelected && (
+                      <Ionicons name="checkmark" size={16} color="#fff" />
+                    )}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Period Selection */}
+        <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Time Period
+          </Text>
+          <View style={styles.periodOptions}>
+            {PERIOD_OPTIONS.map(option => {
+              const isSelected = selectedPeriod === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[
+                    styles.periodOption,
+                    {
+                      backgroundColor: isSelected ? colors.tintPrimary : colors.background,
+                      borderColor: isSelected ? colors.tintPrimary : colors.border,
+                      borderWidth: 2,
+                      shadowColor: isSelected ? colors.tintPrimary : 'transparent',
+                      shadowOpacity: isSelected ? 0.2 : 0,
+                      shadowRadius: 4,
+                      elevation: isSelected ? 2 : 0,
+                    }
+                  ]}
+                  onPress={() => setSelectedPeriod(option.value)}
+                  activeOpacity={0.8}
+                >
+                  {isSelected && (
+                    <Ionicons name="checkmark-circle" size={16} color="#fff" style={{ marginRight: 4 }} />
+                  )}
+                  <Text style={[
+                    styles.periodOptionText,
+                    {
+                      color: isSelected ? '#fff' : colors.textPrimary,
+                      fontWeight: isSelected ? '600' : '500'
+                    }
+                  ]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Format Selection (Enhanced Visibility) */}
+        <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            📊 Report Format
+          </Text>
+          <Text style={[styles.sectionHelper, { color: colors.textSecondary }]}>
+            Choose your preferred file format for the generated report
+          </Text>
+
+          <View style={styles.formatChips}>
+            {FORMAT_OPTIONS.map(format => {
+              const selected = selectedFormat === format.value;
+              return (
+                <TouchableOpacity
+                  key={format.value}
+                  style={[styles.formatChip, {
+                    backgroundColor: selected ? colors.tintPrimary : colors.background,
+                    borderColor: selected ? colors.tintPrimary : colors.border,
+                    shadowColor: selected ? colors.tintPrimary : 'transparent',
+                    shadowOpacity: selected ? 0.3 : 0,
+                    shadowRadius: selected ? 4 : 0,
+                    elevation: selected ? 2 : 0,
+                  }]}
+                  onPress={() => setSelectedFormat(format.value)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={`Select ${format.label} format`}
+                >
+                  <Ionicons
+                    name={format.icon as any}
+                    size={20}
+                    color={selected ? '#fff' : colors.textSecondary}
+                  />
+                  <Text style={[styles.formatChipText, { 
+                    color: selected ? '#fff' : colors.textPrimary,
+                    fontWeight: selected ? '700' : '500'
+                  }]}>
+                    {format.label}
+                  </Text>
+                  {selected && (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#fff"
+                      style={{ marginLeft: 4 }}
+                    />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Options */}
+        <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Include Options
+          </Text>
+          
+          <TouchableOpacity
+            style={[
+              styles.optionItem,
+              {
+                backgroundColor: includeInsights ? colors.tintSoftBg : colors.background,
+                borderColor: includeInsights ? colors.tintPrimary : colors.border,
+                borderWidth: 2,
+              }
+            ]}
+            onPress={() => setIncludeInsights(!includeInsights)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.optionContent}>
+              <View style={styles.optionLabelWithIcon}>
+                <Ionicons name="bulb-outline" size={20} color={colors.tintPrimary} style={{ marginRight: 8 }} />
+                <Text style={[styles.optionLabel, { color: colors.textPrimary, fontWeight: includeInsights ? '600' : '500' }]}>
+                  Financial Insights
+                </Text>
+              </View>
+              <View style={[
+                styles.customCheckbox,
+                {
+                  backgroundColor: includeInsights ? colors.tintPrimary : colors.background,
+                  borderColor: includeInsights ? colors.tintPrimary : colors.border,
+                }
+              ]}>
+                {includeInsights && (
+                  <Ionicons name="checkmark" size={16} color="#fff" />
+                )}
+              </View>
+            </View>
+            <Text style={[styles.optionDescription, { color: colors.textSecondary }]}>
+              Include AI-generated insights and recommendations
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.optionItem,
+              {
+                backgroundColor: includeCharts ? colors.tintSoftBg : colors.background,
+                borderColor: includeCharts ? colors.tintPrimary : colors.border,
+                borderWidth: 2,
+              }
+            ]}
+            onPress={() => setIncludeCharts(!includeCharts)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.optionContent}>
+              <View style={styles.optionLabelWithIcon}>
+                <Ionicons name="bar-chart-outline" size={20} color={colors.tintPrimary} style={{ marginRight: 8 }} />
+                <Text style={[styles.optionLabel, { color: colors.textPrimary, fontWeight: includeCharts ? '600' : '500' }]}>
+                  Charts & Graphs
+                </Text>
+              </View>
+              <View style={[
+                styles.customCheckbox,
+                {
+                  backgroundColor: includeCharts ? colors.tintPrimary : colors.background,
+                  borderColor: includeCharts ? colors.tintPrimary : colors.border,
+                }
+              ]}>
+                {includeCharts && (
+                  <Ionicons name="checkmark" size={16} color="#fff" />
+                )}
+              </View>
+            </View>
+            <Text style={[styles.optionDescription, { color: colors.textSecondary }]}>
+              Include visual charts and graphs (PDF format only)
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Generate Button */}
+        <TouchableOpacity
+          style={[
+            styles.generateButton,
+            {
+              backgroundColor: isGeneratingReport ? colors.textSecondary : colors.tintPrimary,
+              opacity: isGeneratingReport ? 0.7 : 1,
+              shadowColor: colors.tintPrimary,
+              shadowOpacity: isGeneratingReport ? 0 : 0.3,
+              shadowRadius: 8,
+              elevation: isGeneratingReport ? 0 : 4,
+            }
+          ]}
+          onPress={generateReport}
+          disabled={isGeneratingReport || selectedCards.length === 0}
+          activeOpacity={0.8}
+        >
+          {isGeneratingReport ? (
+            <>
+              <ActivityIndicator color="#fff" size="small" />
+              <Text style={[styles.generateButtonText, { marginLeft: 8 }]}>Generating...</Text>
+            </>
+          ) : (
+            <>
+              <Ionicons name="download" size={20} color="#fff" />
+              <Text style={styles.generateButtonText}>Generate Report</Text>
+            </>
+          )}
+        </TouchableOpacity>
+        
+        {selectedCards.length === 0 && (
+          <Text style={[styles.generateHint, { color: colors.textSecondary }]}>
+            💡 Select at least one card to generate a report
+          </Text>
+        )}
+      </ScrollView>
+    );
+  };
+
+  const getInsightIcon = (type: string): string => {
+    switch (type) {
+      case 'spending_pattern': return 'trending-up-outline';
+      case 'income_trend': return 'arrow-up-outline';
+      case 'category_alert': return 'warning-outline';
+      case 'balance_warning': return 'alert-circle-outline';
+      case 'recommendation': return 'bulb-outline';
+      default: return 'information-circle-outline';
+    }
+  };
+
+  const getInsightColor = (severity: string): string => {
+    switch (severity) {
+      case 'success': return '#4caf50';
+      case 'warning': return '#ff9800';
+      case 'danger': return '#f44336';
+      default: return '#2196f3';
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        {/* Header */}
+        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <TouchableOpacity 
+            onPress={onClose} 
+            style={[styles.closeButton, { backgroundColor: colors.background }]}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="close" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
+            Analysis & Reports
+          </Text>
+          <View style={styles.closeButton} />
+        </View>
+
+        {/* Tab Navigation */}
+        <View style={[styles.tabBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'analysis' && { borderBottomColor: colors.tintPrimary }]}
+            onPress={() => setActiveTab('analysis')}
+          >
+            <Ionicons 
+              name="analytics" 
+              size={20} 
+              color={activeTab === 'analysis' ? colors.tintPrimary : colors.textSecondary} 
+            />
+            <Text style={[
+              styles.tabText,
+              { color: activeTab === 'analysis' ? colors.tintPrimary : colors.textSecondary }
+            ]}>
+              Analysis
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'reports' && { borderBottomColor: colors.tintPrimary }]}
+            onPress={() => setActiveTab('reports')}
+          >
+            <Ionicons 
+              name="document-text" 
+              size={20} 
+              color={activeTab === 'reports' ? colors.tintPrimary : colors.textSecondary} 
+            />
+            <Text style={[
+              styles.tabText,
+              { color: activeTab === 'reports' ? colors.tintPrimary : colors.textSecondary }
+            ]}>
+              Reports
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Content */}
+        <View style={styles.content}>
+          {activeTab === 'analysis' ? renderAnalysisTab() : renderReportsTab()}
+        </View>
+      </SafeAreaView>
+      
+      {/* Report Status Modal */}
+      <ReportStatusModal
+        visible={reportStatusModal.visible}
+        status={reportStatusModal.status}
+        reportFormat={reportStatusModal.reportFormat}
+        fileName={reportStatusModal.fileName}
+        errorMessage={reportStatusModal.errorMessage}
+        onClose={closeReportStatusModal}
+        onShare={shareReport}
+        onRetry={retryReportGeneration}
+      />
+      
+      {/* Report Preview Modal */}
+      <ReportPreviewModal
+        visible={reportPreviewModal.visible}
+        reportData={reportPreviewModal.reportData}
+        isLoading={reportPreviewModal.isLoading}
+        onClose={handlePreviewClose}
+        onSave={handlePreviewSave}
+        onShare={handlePreviewShare}
+      />
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+  },
+  closeButton: {
+    padding: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    gap: 8,
+  },
+  tabText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  content: {
+    flex: 1,
+  },
+  tabContent: {
+    flex: 1,
+    padding: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  emptyDescription: {
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  summaryContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 20,
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  summaryCard: {
+    flex: 1,
+    minWidth: 140,
+    maxWidth: 180,
+    padding: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 80,
+  },
+  summaryValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    textAlign: 'center',
+    lineHeight: 14,
+    flexWrap: 'wrap',
+    flexShrink: 1,
+  },
+  chartContainer: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  chartTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  insightsContainer: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  sectionHelper: {
+    fontSize: 13,
+    marginBottom: 16,
+  },
+  insightCard: {
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  insightHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  insightTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  insightDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  formatChips: {
+    flexDirection: 'column',
+    gap: 12,
+  },
+  formatChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    borderWidth: 2,
+    gap: 12,
+  },
+  formatChipText: {
+    fontSize: 16,
+    flex: 1,
+  },
+  tableContainer: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  tableCell: {
+    flex: 1,
+    fontSize: 14,
+  },
+  sectionContainer: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  cardSelectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 16,
+    marginBottom: 12,
+  },
+  selectionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 6,
+    minWidth: 80,
+    justifyContent: 'center',
+  },
+  selectionButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  cardSelectionItem: {
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  cardSelectionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cardName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  cardDetails: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  cardInfo: {
+    flex: 1,
+  },
+  cardBalance: {
+    fontSize: 14,
+    marginTop: 4,
+  },
+  radioButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  periodOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  periodOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    borderWidth: 1,
+    minWidth: 100,
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  periodOptionText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  formatOption: {
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  formatContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  formatText: {
+    flex: 1,
+  },
+  formatLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  optionItem: {
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  optionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  optionLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  optionDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  optionLabelWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  customCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  generateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+    marginTop: 20,
+    marginBottom: 40,
+  },
+  generateButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  generateHint: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
+});

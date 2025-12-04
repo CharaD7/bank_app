@@ -9,7 +9,7 @@
       "barStyle": "light-content"
     },
     "name": "Ahantaman Rural Bank",
-    "slug": "ahantaman-rural-bank",
+    "slug": "bank_app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -21,27 +21,18 @@
       "resizeMode": "contain",
       "backgroundColor": "#0F766E"
     },
-
     "extra": {
-      "firebaseConfig": {
-        "apiKey": "EXPO_PUBLIC_FIREBASE_API_KEY",
-        "authDomain": "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN",
-        "projectId": "EXPO_PUBLIC_FIREBASE_PROJECT_ID",
-        "databaseURL": "EXPO_PUBLIC_FIREBASE_DATABASE_URL",
-        "messagingSenderId": "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
-        "appId": "EXPO_PUBLIC_FIREBASE_APP_ID"
-      },
       "router": {},
       "eas": {
-        "projectId": "a797e361-181e-421f-8e99-febdf932bfa1"
+        "projectId": "90c0a4d9-ed38-47b5-bdee-97664c4efe9f"
       }
     },
-
     "ios": {
       "bundleIdentifier": "com.ahantamanruralbank.app",
       "supportsTablet": true,
       "infoPlist": {
-        "NSFaceIDUsageDescription": "Ahantaman Rural Bank uses Face ID for secure and convenient authentication."
+        "NSFaceIDUsageDescription": "Ahantaman Rural Bank uses Face ID for secure and convenient authentication.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -54,8 +45,9 @@
       "permissions": [
         "USE_BIOMETRIC",
         "USE_FINGERPRINT",
-        "USE_BIOMETRIC",
-        "USE_FINGERPRINT"
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_EXTERNAL_STORAGE",
+        "MANAGE_EXTERNAL_STORAGE"
       ]
     },
     "web": {
@@ -80,17 +72,12 @@
     "experiments": {
       "typedRoutes": true
     },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "90c0a4d9-ed38-47b5-bdee-97664c4efe9f"
-      }
-    },
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "updates": {
       "url": "https://u.expo.dev/90c0a4d9-ed38-47b5-bdee-97664c4efe9f"
-    }
+    },
+    "owner": "charad7"
   }
 }

@@ -64,6 +64,7 @@ export function ClearDataModal({
           setIntervalId(null);
           setIsDelayActive(false);
           onConfirm();
+          onClose();
           return 0;
         }
         return prev - 1;
@@ -395,14 +396,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 10,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 25,
-    elevation: 20,
   },
   header: {
     flexDirection: 'row',

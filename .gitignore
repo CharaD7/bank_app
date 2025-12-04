@@ -4,6 +4,7 @@ npm-debug.log
 yarn-debug.log
 yarn-error.log
 package-lock.json
+pnpm-lock.yaml
 bun.lock
 yarn.lock
 
@@ -144,3 +145,19 @@ app-example/
 .env.production.local
 .vercel
 .netlify
+
+# Build optimization caches
+.metro-cache/
+.tsbuildinfo
+*.tsbuildinfo
+
+# Optimized assets (regenerated during build)
+assets/optimized/
+
+# Build performance logs
+build-performance.json
+metro-performance.log
+
+# System performance
+.DS_Store
+Thumbs.db

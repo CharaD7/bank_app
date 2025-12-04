@@ -1,0 +1,14 @@
+{
+  "ignore_dirs": [
+    "node_modules",
+    ".git",
+    ".expo",
+    ".metro-cache",
+    "ios/build",
+    "android/build",
+    "android/.gradle",
+    "__tests__",
+    "coverage"
+  ],
+  "settle": 20
+}

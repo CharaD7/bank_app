@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 /**
- * Notification Analytics Service
+ * Notification Analysis Service
  * 
  * This service tracks notification engagement metrics and system performance
  * to help improve the notification experience and identify issues.
@@ -61,8 +61,8 @@ interface NotificationEvent {
   metadata?: any;
 }
 
-class NotificationAnalyticsService {
-  private static instance: NotificationAnalyticsService;
+class NotificationAnalysisService {
+  private static instance: NotificationAnalysisService;
   private readonly METRICS_KEY = 'notification_metrics';
   private readonly EVENTS_KEY = 'notification_events';
   private readonly MAX_EVENTS = 1000; // Keep last 1000 events
@@ -74,11 +74,11 @@ class NotificationAnalyticsService {
     this.loadMetrics();
   }
 
-  public static getInstance(): NotificationAnalyticsService {
-    if (!NotificationAnalyticsService.instance) {
-      NotificationAnalyticsService.instance = new NotificationAnalyticsService();
+  public static getInstance(): NotificationAnalysisService {
+    if (!NotificationAnalysisService.instance) {
+      NotificationAnalysisService.instance = new NotificationAnalysisService();
     }
-    return NotificationAnalyticsService.instance;
+    return NotificationAnalysisService.instance;
   }
 
   private getDefaultMetrics(): NotificationMetrics {
@@ -453,8 +453,8 @@ class NotificationAnalyticsService {
   public exportAnalytics(): {
     metrics: NotificationMetrics;
     recentEvents: NotificationEvent[];
-    summary: ReturnType<NotificationAnalyticsService['getEngagementSummary']>;
-    health: ReturnType<NotificationAnalyticsService['getSystemHealth']>;
+    summary: ReturnType<NotificationAnalysisService['getEngagementSummary']>;
+    health: ReturnType<NotificationAnalysisService['getSystemHealth']>;
   } {
     return {
       metrics: this.getMetrics(),
@@ -482,7 +482,7 @@ class NotificationAnalyticsService {
 }
 
 // Export singleton instance
-export const notificationAnalytics = NotificationAnalyticsService.getInstance();
+export const notificationAnalytics = NotificationAnalysisService.getInstance();
 
 // Helper functions for easy integration
 export const trackNotificationCreated = (notification: Notification) => 

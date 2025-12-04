@@ -6,21 +6,78 @@
   "build": {
     "development": {
       "developmentClient": true,
-
-			"bun": "1.0.0",
-      "distribution": "internal"
+      "bun": "1.0.0",
+      "distribution": "internal",
+      "cache": {
+        "disabled": true,
+        "paths": [
+          "node_modules",
+          ".expo",
+          "assets/fonts",
+          "assets/images"
+        ]
+      },
+      "env": {
+				"CI": "true",
+        "NODE_ENV": "development",
+        "EXPO_USE_FAST_RESOLVER": "1",
+        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+      },
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "ios": {
+        "buildConfiguration": "Debug",
+        "simulator": true
+      }
     },
     "preview": {
-			"bun": "1.0.0",
-      "distribution": "internal"
+      "bun": "1.0.0",
+      "distribution": "internal",
+      "cache": {
+        "disabled": true,
+        "paths": [
+          "node_modules",
+          ".expo",
+          "assets/fonts",
+          "assets/images"
+        ]
+      },
+      "env": {
+				"CI": "true",
+        "NODE_ENV": "development",
+        "EXPO_USE_FAST_RESOLVER": "1",
+        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+      },
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
-			"bun": "1.0.0",
-
-      "autoIncrement": true
+      "bun": "1.0.0",
+      "autoIncrement": true,
+      "cache": {
+        "disabled": true,
+        "paths": [
+          "node_modules",
+          ".expo",
+          "assets/fonts",
+          "assets/images"
+        ]
+      },
+      "env": {
+				"CI": "true",
+        "NODE_ENV": "development",
+        "EXPO_USE_FAST_RESOLVER": "1",
+        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {
-    "production": {}
+    "development": {}
   }
 }

@@ -8,7 +8,7 @@ import {
   queryTransactions as queryAppwriteTransactions
 } from "@/lib/appwrite/transactionService";
 import { StorageManager } from "@/lib/storageService";
-import { initNotificationService } from "@/lib/appwrite/notificationService";
+import { initNotificationService, showAlertWithNotification } from "@/lib/appwrite/notificationService";
 import { logger } from "@/lib/logger";
 
 // Appwrite database services
@@ -32,6 +32,7 @@ import { initConnectionMonitoring, getConnectionStatus } from "@/lib/connectionS
 import { activityLogger } from "@/lib/activityLogger";
 import useAuthStore from "@/store/auth.store";
 import appStateService from "@/lib/appState.service";
+import { useAlert } from "@/context/AlertContext"; // Import useAlert
 import { 
   useTransactionLoading, 
   useCardLoading, 
@@ -48,7 +49,7 @@ interface AppContextType {
   removeCard: (cardId: string) => void;
   addTransaction: (transaction: Omit<Transaction, "id" | "date">) => void;
   updateCardBalance: (cardId: string, newBalance: number) => void;
-  makeTransfer: (cardId: string, amount: number, recipientCardNumber: string, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; recipientNewBalance?: number }>;
+  makeTransfer: (cardId: string, amount: number, recipientCardNumber: string, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; recipientNewBalance?: number; isPending?: boolean; transactionId?: string; recipientCard?: any }>;
   makeWithdrawal: (cardId: string, amount: number, withdrawalMethod: string, withdrawalDetails: any, description?: string) => Promise<{ success: boolean; error?: string; newBalance?: number; transactionId?: string; reference?: string; instructions?: any }>;
   makeDeposit: (params: { cardId?: string; amount?: number; currency?: string; escrowMethod?: string; description?: string; depositId?: string; action?: string; mobileNetwork?: string; mobileNumber?: string; reference?: string }, onSuccess?: (data: any) => void) => Promise<{ success: boolean; error?: string; data?: any }>;
   makeTransaction: (params: { type: 'withdrawal' | 'deposit' | 'transfer' | 'payment'; amount: number; fromCardId?: string; toCardId?: string; description?: string; fee?: number }) => Promise<{ success: boolean; error?: string }>;
@@ -331,92 +332,6 @@ const pushActivity: AppContextType["pushActivity"] = (evt) => {
       logger.warn('CONTEXT', 'Failed to log transaction activity to centralized logger', error);
     });
     
-    // Keep legacy activity event for backward compatibility (until migration is complete)
-    const activityTitle = newTransaction.type === 'transfer' ? 
-      newTransaction.description : 
-      `${newTransaction.type.charAt(0).toUpperCase()}${newTransaction.type.slice(1)}: ${newTransaction.description}`;
-    
-    const activityEvent = {
-      id: `tx.${newTransaction.id}`,
-      category: 'transaction' as const,
-      type: `transaction.${newTransaction.type}`,
-      title: activityTitle,
-      subtitle: new Date(newTransaction.date).toLocaleString(),
-      amount: newTransaction.amount,
-      currency: 'GHS',
-      status: newTransaction.status as any,
-      timestamp: newTransaction.date,
-      transactionId: newTransaction.id,
-      cardId: newTransaction.cardId,
-      tags: [newTransaction.category],
-      mobileNumber: newTransaction.mobileNumber,
-      mobileNetwork: newTransaction.mobileNetwork,
-      metadata: {
-        mobileNumber: newTransaction.mobileNumber,
-        mobileNetwork: newTransaction.mobileNetwork
-      }
-    };
-    
-    pushActivity(activityEvent);
-
-    // Persist transaction and activity to cache and Appwrite
-    const persistDataInBackground = async () => {
-      try {
-        // Update transaction cache
-        // Note: cacheTransactions was removed - transactions are now cached via Appwrite
-        
-        // Update activity cache with the new activity event
-        const currentActivity = await StorageManager.getCachedActivityEvents();
-        const existingEvents = currentActivity?.events || [];
-        const mergedActivity = StorageManager.mergeActivityEvents(existingEvents, [activityEvent]);
-        await StorageManager.cacheActivityEvents(mergedActivity);
-        
-        // Persist to Appwrite in background
-        try {
-          // Check authentication state before attempting Appwrite operations
-          const { isAuthenticated, user } = useAuthStore.getState();
-          if (!isAuthenticated || !user) {
-            logger.auth.warn('[addTransaction] User not authenticated, skipping Appwrite persistence');
-            return;
-          }
-          
-          logger.database.info('[addTransaction] Persisting transaction to Appwrite:', newTransaction.id);
-          const appwriteTransaction = await createAppwriteTransaction(newTransaction);
-          logger.database.info('[addTransaction] Transaction persisted successfully:', appwriteTransaction.id);
-          
-          // Update local state with Appwrite document ID if different
-          if (appwriteTransaction.id !== newTransaction.id) {
-            setTransactions(prev => prev.map(tx => 
-              tx.id === newTransaction.id 
-                ? { ...tx, id: appwriteTransaction.id }
-                : tx
-            ));
-          }
-          
-          // Create activity event in Appwrite
-          await createAppwriteActivityEvent({
-            ...activityEvent,
-            id: `tx.${appwriteTransaction.id}`,
-            transactionId: appwriteTransaction.id,
-          });
-          
-          // Track analytics for this transaction
-          const { trackTransactionAnalytics } = await import('@/lib/analyticsHelpers');
-          trackTransactionAnalytics(newTransaction, user.$id || user.id || '');
-          
-        } catch (appwriteError) {
-          logger.database.warn('[addTransaction] Failed to persist to Appwrite:', appwriteError);
-          // Could implement retry logic or queue for later sync
-        }
-        
-      } catch (error) {
-        logger.error('STORAGE', '[addTransaction] Failed to cache data:', error);
-      }
-    };
-    
-    // Cache and persist in background (don't await)
-    persistDataInBackground();
-    
     // Note: Transfers are already persisted via /v1/transfers endpoint in makeTransfer
     // Payments would be persisted via /v1/payments endpoint 
     // This function is mainly for local state updates and activity events
@@ -454,7 +369,7 @@ const addCard: AppContextType["addCard"] = async (cardData) => {
       cardNumber: cardData.cardNumber,
       cardHolderName: cardData.cardHolderName,
       expiryDate: cardData.expiryDate,
-      balance: cardData.balance ?? 0,
+      balance: cardData.balance ?? 40000, // Set optimistic balance to default 40000
       cardType: cardData.cardType,
       isActive: true,
       cardColor: cardData.cardColor || '#1D4ED8',
@@ -558,6 +473,12 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
     // Optimistically update local state
     setCards((prev) => prev.filter((c) => c.id !== cardId));
     setActiveCard((prev) => (prev?.id === cardId ? null : prev));
+    
+    // Also remove associated transactions and activities from local state
+    setAllTransactions((prev) => prev.filter((tx) => tx.cardId !== cardId));
+    setTransactions((prev) => prev.filter((tx) => tx.cardId !== cardId));
+    setAllActivity((prev) => prev.filter((act) => act.cardId !== cardId));
+    setActivity((prev) => prev.filter((act) => act.cardId !== cardId));
 
     // Activity
     const activityEvent = {
@@ -657,7 +578,15 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         error: 'User not authenticated. Please sign in again.'
       };
     }
-    
+    const currentUserId = user.$id || user.id;
+    if (!currentUserId) {
+        logger.error('TRANSFERS', 'Current user ID not found');
+        return {
+          success: false,
+          error: 'User not authenticated. Please sign in again.'
+        };
+    }
+
     try {
       // Use the enhanced transfer service
       const { transferService } = await import('@/lib/appwrite/transferService');
@@ -673,15 +602,20 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
       
       logger.info('TRANSFERS', '[Enhanced] Executing transfer with enhanced service');
       
-      const result = await transferService.executeTransfer(transferRequest);
+      const result = await transferService.executeTransfer(transferRequest, currentUserId); // Pass currentUserId
       
       if (result.success) {
-        // Update local card balance optimistically
+        // Update local card balance optimistically for source card
         if (result.sourceNewBalance !== undefined) {
           updateCardBalance(cardId, result.sourceNewBalance);
         }
         
-        // Refresh data with slight delay to ensure database consistency
+        // Update recipient card balance locally (only for same-user immediate transfers)
+        if (!result.isPending && result.recipientCard?.id && result.recipientNewBalance !== undefined) {
+          updateCardBalance(result.recipientCard.id, result.recipientNewBalance);
+        }
+        
+        // Refresh data with slight delay to ensure database consistency for all types of transfers
         setTimeout(() => {
           refreshCardBalances();
           refreshTransactions();
@@ -690,7 +624,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         logger.info('TRANSFERS', '[Enhanced] Transfer completed successfully', {
           transactionId: result.transactionId,
           sourceNewBalance: result.sourceNewBalance,
-          recipientNewBalance: result.recipientNewBalance
+          recipientNewBalance: result.recipientNewBalance,
+          isPending: result.isPending
         });
         
         return {
@@ -699,7 +634,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
           newBalance: result.sourceNewBalance,
           recipientNewBalance: result.recipientNewBalance,
           transactionId: result.transactionId,
-          recipientCard: result.recipientCard
+          recipientCard: result.recipientCard,
+          isPending: result.isPending
         };
       } else {
         logger.error('TRANSFERS', '[Enhanced] Transfer failed', result.error);
@@ -723,7 +659,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
       cardId,
       amount,
       withdrawalMethod,
-      description
+      description,
+      withdrawalDetails: withdrawalDetails ? 'present' : 'missing'
     });
     
     // Validate user session is active before initiating withdrawal
@@ -737,8 +674,19 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
     }
     
     try {
-      // Use the enhanced withdrawal service
-      const { processWithdrawal } = await import('@/lib/appwrite/withdrawalService');
+      // Use the enhanced withdrawal service with more explicit import
+      logger.info('WITHDRAWALS', '[Enhanced] Importing withdrawal service');
+      const withdrawalService = await import('@/lib/appwrite/withdrawalService');
+      
+      if (!withdrawalService.processWithdrawal) {
+        logger.error('WITHDRAWALS', 'processWithdrawal function not found in imported module', {
+          availableExports: Object.keys(withdrawalService)
+        });
+        return {
+          success: false,
+          error: 'Withdrawal service not available. Please try again.'
+        };
+      }
       
       // Build withdrawal request based on method and details
       const withdrawalRequest = {
@@ -750,18 +698,41 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         ...withdrawalDetails // Spread method-specific details
       };
       
-      logger.info('WITHDRAWALS', '[Enhanced] Executing withdrawal with enhanced service');
+      logger.info('WITHDRAWALS', '[Enhanced] Executing withdrawal with enhanced service', {
+        requestStructure: {
+          cardId: withdrawalRequest.cardId,
+          amount: withdrawalRequest.amount,
+          currency: withdrawalRequest.currency,
+          withdrawalMethod: withdrawalRequest.withdrawalMethod,
+          description: withdrawalRequest.description,
+          detailsPresent: Object.keys(withdrawalDetails || {}).length > 0
+        }
+      });
       
-      const result = await processWithdrawal(withdrawalRequest);
+      const result = await withdrawalService.processWithdrawal(withdrawalRequest);
       
-      if (result.success) {
+      logger.info('WITHDRAWALS', '[Enhanced] Withdrawal service returned result', {
+        success: result?.success,
+        hasData: !!result?.data,
+        hasNewBalance: result?.newBalance !== undefined,
+        hasTransactionId: !!result?.transactionId,
+        error: result?.error
+      });
+      
+      if (result?.success) {
         // Update local card balance optimistically
         if (result.newBalance !== undefined) {
+          logger.info('WITHDRAWALS', '[Enhanced] Updating local card balance', {
+            cardId,
+            oldBalance: cards.find(c => c.id === cardId)?.balance,
+            newBalance: result.newBalance
+          });
           updateCardBalance(cardId, result.newBalance);
         }
         
         // Refresh data with slight delay to ensure database consistency
         setTimeout(() => {
+          logger.info('WITHDRAWALS', '[Enhanced] Triggering data refresh after withdrawal');
           refreshCardBalances();
           refreshTransactions();
         }, 1000);
@@ -769,7 +740,8 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
         logger.info('WITHDRAWALS', '[Enhanced] Withdrawal completed successfully', {
           transactionId: result.transactionId,
           newBalance: result.newBalance,
-          reference: result.data?.reference
+          reference: result.data?.reference,
+          instructions: result.data?.instructions ? 'present' : 'missing'
         });
         
         return {
@@ -781,18 +753,26 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
           instructions: result.data?.instructions
         };
       } else {
-        logger.error('WITHDRAWALS', '[Enhanced] Withdrawal failed', result.error);
+        logger.error('WITHDRAWALS', '[Enhanced] Withdrawal failed with result', {
+          success: result?.success,
+          error: result?.error,
+          fullResult: result
+        });
         return {
           success: false,
-          error: result.error || 'Withdrawal failed'
+          error: result?.error || 'Withdrawal failed. Please try again.'
         };
       }
       
     } catch (error) {
-      logger.error('WITHDRAWALS', '[Enhanced] Withdrawal service error', error);
+      logger.error('WITHDRAWALS', '[Enhanced] Withdrawal service error', {
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorType: typeof error
+      });
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Withdrawal service unavailable'
+        error: error instanceof Error ? error.message : 'Withdrawal service unavailable. Please try again.'
       };
     }
   };
@@ -2033,6 +2013,7 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
     
     // Clear local state
     setTransactions([]);
+    setAllTransactions([]);
     setTransactionsCursor(null);
     
     // Clear transaction-related activity events
@@ -2051,10 +2032,6 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
           events: nonTransactionEvents 
         });
       }
-      
-      // Set a flag to indicate transactions were manually cleared
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      await AsyncStorage.setItem('transactions_manually_cleared', Date.now().toString());
       
       logger.info('TRANSACTION', 'Transaction data cleared successfully');
     } catch (error) {
@@ -2119,21 +2096,23 @@ const removeCard: AppContextType["removeCard"] = async (cardId) => {
   const clearAllActivity: AppContextType['clearAllActivity'] = async () => {
     logger.info('ACTIVITY', 'Starting clear all activity operation with database cleanup');
     
-    // Clear local activity state
+    // Clear local activity and transaction state
+    await clearAllTransactions();
     setActivity([]);
+    setAllActivity([]);
     
     try {
       // Clear from activityLogger with proper cache cleanup
       await activityLogger.clearActivities();
       
-      // Clear cached activity events
+      // Clear cached activity and transaction events
       await StorageManager.clearActivityCache();
       
       // Set a flag to indicate activity was manually cleared
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       await AsyncStorage.setItem('activity_manually_cleared', Date.now().toString());
       
-      logger.info('ACTIVITY', 'Activity data cleared successfully with database cleanup');
+      logger.info('ACTIVITY', 'Activity and transaction data cleared successfully with database cleanup');
     } catch (error) {
       logger.error('ACTIVITY', 'Failed to clear activity with database cleanup:', error);
       throw error;

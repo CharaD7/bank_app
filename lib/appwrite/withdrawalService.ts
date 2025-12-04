@@ -886,9 +886,9 @@ export class AppwriteWithdrawalService {
   }
 
   /**
-   * Get estimated completion time for withdrawal method
+   * Get estimated completion time as ISO date string
    */
-  private getEstimatedCompletionTime(method: WithdrawalMethod): string {
+  private getEstimatedCompletionTimeISO(method: WithdrawalMethod): string {
     const now = new Date();
     
     switch (method) {

@@ -18,7 +18,7 @@ import activityService from './activityService';
 import notificationService from './notificationService';
 import transferService from './transferService';
 import withdrawalService from './withdrawalService';
-import analyticsService from './analyticsService';
+import analysisService from './analysisService';
 
 // Authentication service
 export * from './auth';
@@ -52,9 +52,9 @@ export { default as transferService } from './transferService';
 export * from './withdrawalService';
 export { default as withdrawalService } from './withdrawalService';
 
-// Analytics service
-export * from './analyticsService';
-export { default as analyticsService } from './analyticsService';
+// Analysis service
+export * from './analysisService';
+export { default as analysisService } from './analysisService';
 
 // Re-export commonly used types and utilities
 export type { 
@@ -123,16 +123,16 @@ export type {
 } from './withdrawalService';
 
 export type {
-  AnalyticsData,
+  AnalysisData,
   DailyTransaction,
   MonthlyTrend,
   CategoryBreakdown,
   TransactionTypeBreakdown,
-  AnalyticsInsight,
+  AnalysisInsight,
   ReportFormat,
   ReportPeriod,
   ReportOptions
-} from './analyticsService';
+} from './analysisService';
 
 // Default export with all services
 export default {
@@ -144,5 +144,5 @@ export default {
   notifications: notificationService,
   transfers: transferService,
   withdrawals: withdrawalService,
-  analytics: analyticsService,
+  analysis: analysisService,
 };
